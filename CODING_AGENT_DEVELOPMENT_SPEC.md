@@ -743,8 +743,10 @@ Lexical validation does not resolve symlinks or enforce a sandbox.
 
 `PermissionPolicy` defaults to `network: false`, `shell: deny`, `database: deny`.
 P01 also accepts `shell: restricted` and `database: test_only`; network must be an
-actual boolean. These declare requested capabilities only. P03 must reject execution
-if its backend cannot enforce requested restrictions (D05 remains open).
+actual boolean. These declare requested capabilities only. P03 rejects execution
+if its backend cannot enforce requested restrictions. D05's concrete supported
+subset and limitations are specified in Section 21.1; a plan approval never grants
+an unavailable backend capability.
 
 ---
 
@@ -1403,6 +1405,37 @@ class Tool(Protocol):
         ...
 ```
 
+### P03 concrete API
+
+`core/tools.py` defines the discriminated Read/Search/Patch/Shell/Git invocation
+union, ToolRequest, ToolApproval and ToolResult. The application constructs a
+`tools.ToolRuntime` bound to one RunSpec/task, root, plan authorization, revision
+reader and shared JsonlJournal, then calls `await execute(request, approval=...)`.
+The controller supplies approvals and execution configuration; an Agent's returned
+approval or success claim is not authoritative.
+
+Native read/search operate on UTF-8 regular files. Patch performs a whole-file
+replacement with an expected SHA256, or create-only when the expected hash is None.
+It checks the target again, preserves ordinary mode bits, flushes the new file and
+directory, and records actual before/after hashes and a unified diff. Parent
+directories must already exist. It does not delete files or apply model-claimed
+diffs without reading actual content. These file hashes do not replace P04's full
+workspace snapshot.
+
+Shell accepts an absolute executable path, an argument array and a repository-
+relative working directory. Git provides fixed read-only status/diff commands;
+hooks, external diff/textconv, fsmonitor and global configuration are disabled.
+External Git directories and worktree metadata are rejected until P04. No new
+dependency, test parser, MCP integration or delivery command is introduced in P03.
+
+Defaults are a 30-second process timeout (maximum 300), 64 KiB result output
+(maximum 1 MiB), and 1 MiB per text file. Search is bounded to 10,000 entries;
+process input inspection is bounded to 20,000 entries. Truncation and skipped
+unreadable search inputs are explicit, not exhaustive-search claims. A timed-out
+or cancelled process is killed and reaped. Failed mutations retain their actual
+state; `executed` conservatively indicates dispatch that may have had effects,
+not proof that a failed operation changed a file.
+
 ---
 
 # 21. Policy Engine
@@ -1454,6 +1487,53 @@ shell:
   git push*: deny
   rm -rf*: deny
 ```
+
+This pattern example is an authorization sketch, not an isolation mechanism.
+Shell/test commands can execute arbitrary repository code. A prefix allowlist or
+Git worktree cannot enforce network, filesystem or process permissions.
+
+## 21.1 D05 — P03 enforced subset
+
+P03 chooses a deliberately restricted local backend and reports unsupported
+capabilities explicitly. The initial plan targeted Windows first; P01 was verified
+there, while the current P03 host is macOS. P03 does not claim Windows or Linux
+execution support. Future verification requirements must be met by a tested
+backend, without removing checks or weakening permissions to obtain success.
+
+| Operation/boundary | Concrete enforcement |
+| --- | --- |
+| Native file access | POSIX directory descriptors and O_NOFOLLOW; normalized relative paths; regular single-link files only; forbidden ancestors override grants, including conservative case-insensitive denials; patch additionally requires allowed scope |
+| Controller/Git metadata | File tools reject `.agent`, `.agents`, `.codex`, `.git` path components regardless of case; records live outside the repository or under its `.agent/` directory |
+| Process file access | macOS sandbox-exec with default deny, read-only repository and explicit trusted runtime roots plus required system library paths; forbidden paths and controller directories remain denied; shell cannot read Git metadata |
+| Persistent process writes | Denied, including repository, external and controller paths; only `/dev/null` permits write-data; source edits go through Patch |
+| Network/process isolation | Network including Unix sockets, Mach IPC and process-fork are denied; environment is replaced with a small fixed map, extra file descriptors are closed; exec remains under the same sandbox |
+| Existing aliases | Native tools reject symlinks/hardlinks; process preflight rejects accessible hardlinked inputs, while kernel path checks resolve symlinks |
+| Unsupported requests | No backend/fallback, network-enabled shell, test database provisioning and process exclusions beyond literal paths or directory/** produce DENY before launch |
+| Authorization | A matching plan is required; scoped file tools and fixed Git reads reuse it; shell reuses only an exact declared command in root cwd, otherwise ASK; a concrete operation approval cannot bypass scope/backend DENY |
+
+The controller owns the workspace during execution; hostile concurrent changes by
+another unsandboxed process are outside this backend's guarantee. Trusted runtime
+roots are controller configuration, never Agent-supplied grants; keep them narrow
+and free of controller secrets. Root-directory listing, filesystem metadata and
+necessary OS library reads are permitted for program startup, not host-wide file
+content access. `sandbox-exec` is deprecated in the host's Apple man page; availability
+and behavior must be rechecked on other OS versions, with no unsandboxed fallback.
+
+The original database permission had no resource semantics. P03 defines `deny`
+as no provided database service, credentials or database mutation capability;
+network/IPC and persistent process writes are blocked. Approved local file reads
+remain file reads: this is not a semantic ban on SQL computation or parsing local
+database files. Protect database data paths with forbidden scope. `test_only`
+requires actual test database provisioning/isolation and is rejected until that
+exists. The current backend also rejects writes needed by many builds/tests and
+does not allow child processes; this is a P09 capability prerequisite, not a reason
+to skip required checks and declare them passed.
+
+Design references checked for this boundary: the host's Apple `sandbox-exec(1)`
+manual, Chromium's [macOS sandbox design](https://www.chromium.org/developers/design-documents/sandbox/osx-sandboxing-design/)
+(including inherited descriptors) and its [common sandbox policy](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/sandbox/policy/mac/common.sb)
+(default-deny and system runtime paths). These references do not certify this
+implementation; DEV_PLAN.md records its actual kernel-level tests and limitations.
 
 ---
 
@@ -1996,6 +2076,19 @@ On resume, compare the checkpoint with recorded events and actual workspace stat
 
 Retain partial diffs, completed steps, and failure evidence after interruption or cancellation. Recovery must preserve user changes and must not reset the repository merely to match an old checkpoint. Relevant manual edits require reconciliation of the plan, context, and evidence before continuing.
 
+P03 implements only a newly created session directory containing `events.jsonl`
+and uniquely named plan/diff/output artifacts. The complete layout above remains
+the staged V1 target. Artifacts are exclusive-created, flushed, sanitized and hashed;
+the registered RunSpec fingerprint identifies the original controller input, while
+its sanitized artifact is for inspection and cannot be assumed replayable. A
+different plan cannot silently replace it in this writer; P07 adds versioned plans.
+
+`session.records.inspect_journal` reads valid complete events, checks sequence and
+request/result identity, and reports unresolved requests and any incomplete final
+line. It leaves every byte intact and rejects corrupt complete records. Opening an
+existing journal for writing is refused; there is no automatic recovery/replay in
+P03. P12 must reconcile actual state before authorizing further work.
+
 ---
 
 # 31. Execution Trace and Observability
@@ -2040,7 +2133,15 @@ evidence IDs and source references. A start event precedes each adapter call; a
 state-change event is accepted by the writer before the in-memory state changes.
 The engine stops dispatch and raises EventWriteError if an append fails, without
 claiming a completed result. P03 supplies durable storage and real tool events;
-an in-memory Fake writer is not crash-safe persistence.
+an in-memory Fake writer is not crash-safe persistence. EventWriter.next_sequence
+is now the sole sequence allocator shared by WorkflowEngine and ToolRuntime.
+JsonlJournal appends and fsyncs each event. It blocks further operations and
+lifecycle progress when a request lacks a result, or recording fails. Results
+correlate request event ID, request ID, task and original request revision.
+Plan registration precedes real tool use; plan and tool events include artifact
+references, while ToolResult records permission decision, timing, status, actual
+exit code when available, bounded output and file hashes. These are execution
+records, not P09 verification Evidence.
 
 P02 engines are one-shot: repeated or overlapping `run()` calls are rejected.
 External asyncio cancellation records known cancelled states and an interrupted
@@ -2439,6 +2540,12 @@ PolicyEngine
 Ensure commands can be allowed or denied.
 
 Add durable JSONL event recording before any real coding loop is enabled. Record actual requests, permission decisions, correlated results/errors, and artifact references. Verify that recording failure blocks new mutations and that Agent tools cannot rewrite controller-owned session records.
+
+P03 implements this subset in `core/tools.py`, `core/tool_policy.py`, `tools/`,
+`runtime/` and `session/records.py`. Sections 20, 21.1 and 30–31 describe the actual
+interfaces and enforced permissions; DEV_PLAN.md contains platform-specific tests.
+No real Coder, full code snapshot, verifier, checkpoint resume or delivery is
+claimed by this phase.
 
 ---
 

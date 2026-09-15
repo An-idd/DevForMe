@@ -93,6 +93,10 @@ class FakeEventWriter:
         self.fail_at = fail_at
 
     @property
+    def next_sequence(self) -> int:
+        return len(self._events) + 1
+
+    @property
     def events(self) -> tuple[WorkflowEvent, ...]:
         return tuple(self._events)
 

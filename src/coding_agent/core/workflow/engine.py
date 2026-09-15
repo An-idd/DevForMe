@@ -57,7 +57,6 @@ class WorkflowEngine:
         self._evidence: list[Evidence] = []
         self._reviews: list[ReviewResult] = []
         self._revision = self._spec.revision
-        self._sequence = 0
         self._started = False
         self._authorized = False
         self._result: WorkflowResult | None = None
@@ -81,7 +80,7 @@ class WorkflowEngine:
         evidence_ids: tuple[str, ...] = (),
         source: str | None = None,
     ) -> None:
-        sequence = self._sequence + 1
+        sequence = self._writer.next_sequence
         event = WorkflowEvent.model_validate(
             {
                 "event_id": f"{self._spec.session_id}:{sequence}",
@@ -104,7 +103,6 @@ class WorkflowEngine:
             raise EventWriteError(
                 "event append failed; stop and reconcile recorded state"
             ) from error
-        self._sequence = sequence
 
     def _attempt_available(self, task: TaskSpec) -> bool:
         return (
@@ -249,7 +247,7 @@ class WorkflowEngine:
                     continue
                 records.append(
                     Evidence(
-                        id=f"{self._spec.session_id}:review:{self._sequence}:{len(records)}",
+                        id=f"{self._spec.session_id}:review:{self._writer.next_sequence}:{len(records)}",
                         task_id=task.id,
                         plan_version=review.revision.plan_version,
                         context_revision=review.revision.context_revision,
