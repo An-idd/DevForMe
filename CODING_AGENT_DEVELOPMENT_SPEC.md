@@ -54,7 +54,7 @@ Requirement satisfied
 + Tests passed
 + Static checks passed
 + Acceptance criteria satisfied
-+ Review passed
++ Applicable review passed
 + Evidence recorded
 ```
 
@@ -860,8 +860,10 @@ Agents must not directly mutate task state.
 
 P01 implements `validate_transition(current, target)` as a pure check. No self-transitions
 are legal. Passing this check does not establish dependency readiness, approval, retry
-budget or QualityGate success; those preconditions belong to P02. D03 will reconcile
-execution modes in P02; P01 has no direct VERIFYING → VERIFIED bypass.
+budget or QualityGate success; P02 StateMachine and WorkflowEngine enforce these
+preconditions. D03 is resolved by the mode policy in Section 28. All modes retain
+VERIFYING → REVIEWING → VERIFIED; REVIEWING evaluates applicability even when a
+low-risk FAST task requires no Reviewer call. No direct bypass is allowed.
 
 | Current state | Allowed next states |
 | --- | --- |
@@ -897,26 +899,14 @@ Responsibilities:
 - handle task completion;
 - trigger downstream tasks.
 
-Example:
+P02 implements the pure `TaskScheduler.next_task(graph, states) -> TaskSpec | None`
+in `src/coding_agent/core/workflow/scheduling.py`. It selects one ready task in plan
+order, and returns no task while another is active. V1 concurrency is fixed at 1.
+Workspace assignment and parallel execution are not part of this scheduler yet.
 
-```python
-class TaskScheduler:
-
-    async def next_tasks(
-        self,
-        graph: TaskGraph,
-        max_concurrency: int
-    ) -> list[TaskSpec]:
-        ...
-```
-
-V1 concurrency may be:
-
-```text
-1
-```
-
-but architecture must support future parallelism.
+`StateMachine.validate` adds dependency, authorization, attempt-budget and QualityGate
+preconditions to the P01 transition table without owning writable state.
+`WorkflowEngine` alone stores and changes task states, exposing read-only snapshots.
 
 ---
 
@@ -1607,6 +1597,30 @@ The final result must distinguish completed implementation from completed verifi
 
 For staged work, the requirement-level completion gate must cover all required scope and milestone outcomes, including scope not yet compiled into the active TaskGraph. A verified current batch is insufficient while required later work remains pending.
 
+P02 API: `QualityGate.verification(task, revision, evidence)` checks the current
+verification response; `evaluate(task, revision, evidence, review, mode)` additionally
+checks review applicability and the matching ReviewResult. Evidence must cover every
+required non-review criterion/check pair exactly once, with matching task, description,
+type, command and all three revision fields. At least one non-review check is required.
+Duplicate/conflicting records and unexpected checks fail closed; historical passes
+are never combined with the current response to hide missing or failing checks.
+
+ReviewResult carries task ID, revision, status, source, timestamp and blocking/major/minor
+findings. Blocking or major findings reject completion even if its status says passed;
+minor findings remain visible. Declared review checks are supported by this matching
+report, and the controller records corresponding REVIEW Evidence. Review reports cannot
+supply test results. P02 does not support command-bearing review checks and rejects
+them rather than implying that their command ran.
+
+P02 uses trusted in-process Fake adapters and a supplied RevisionReader. It compares
+revision values but does not authenticate execution sources or compute real filesystem
+snapshots. Those controls require P03/P04/P09. `WorkflowResult.outcome=tasks_verified`
+means this graph's task-local gates passed on their recorded snapshots, including the
+vacuous empty graph. It does not establish current whole-requirement acceptance, final
+integration or delivery; later tasks may supersede earlier snapshots. The result's
+revision is the last observed runtime revision, and may require reconciliation after
+an interrupted adapter. Final snapshot verification and delivery remain required.
+
 ---
 
 # 26. Failure Handling
@@ -1635,6 +1649,22 @@ Configuration:
 max_implementation_attempts: 3
 max_review_fix_attempts: 2
 ```
+
+P02 implements `TaskSpec.max_attempts` (default 3) as the total Coder invocations for
+that task, including initial implementation, verification repairs and review repairs.
+`RunSpec.max_review_fixes` (default 2) further limits review repairs;
+`RunSpec.max_total_attempts` (default 30) caps Coder invocations across the current run.
+Each adapter call has a cooperative asyncio timeout (`worker_timeout_seconds`, default
+60). Exhaustion produces REPLAN_REQUIRED; no same-engine restart resets these counters.
+These are the same limits in all modes unless explicitly set in the approved RunSpec.
+
+Only definite FAILED checks or failed review/findings initiate bounded code repair.
+Missing/invalid/skipped/unavailable/inconclusive results and adapter errors/timeouts
+block execution for reconciliation. Stale records, changed plan/context or source
+changes during verification/review require replanning. P02 halts the run on the first
+non-VERIFIED task and blocks unstarted tasks; cancellation cancels unstarted tasks.
+P11 adds diagnosis and versioned replanning with persistent session-wide budgets;
+P02 never creates a fresh plan or retries an uncertain side effect automatically.
 
 ---
 
@@ -1708,11 +1738,15 @@ small isolated change
 Workflow:
 
 ```text
+Approved Plan + Project Rules
+ ↓
 Coder
  ↓
-Verification
+Required Verification
  ↓
-Done
+Review Applicability + QualityGate
+ ↓
+Task VERIFIED
 ```
 
 ---
@@ -1775,6 +1809,36 @@ Integration Verification
  ↓
 Human Approval
 ```
+
+## 28.1 P02 Mode Policy (D03)
+
+The following table resolves the earlier FAST shortcut versus Sections 11/25/39.
+Modes do not delete declared checks or authorize tools by themselves.
+
+| Mode | Applicability | Required verification | Task review | Plan / delivery authorization |
+| --- | --- | --- | --- | --- |
+| FAST | Low-risk work explicitly requested in FAST mode | Every declared non-review check; at least one | Required if AcceptanceSpec declares review; otherwise record why no Reviewer call is required | Both required; reuse matching existing authorization |
+| STANDARD | Default; also the minimum for medium risk | Every declared check applicable to repository capabilities and acceptance | Independent Reviewer required | Both required; reuse matching existing authorization |
+| STRICT | Required for high risk, or explicitly selected | Every declared check, including the risk-specific checks established by planning; final integration before delivery | Independent Reviewer required; blocking/major findings prevent completion | Both required; reuse matching existing authorization; tool permissions remain separate |
+
+Risk sets a floor: high risk always selects STRICT; medium risk upgrades FAST to
+STANDARD. Complexity does not change this floor. P02 enforces declared checks, not
+semantic completeness of the test plan; later planning/verification must establish
+the risk-specific and repository-level requirements.
+
+`RunSpec` is the immutable P02 execution envelope: session ID, TaskGraph, starting
+plan/context/workspace revisions, requested mode and retry/timeout limits. It is not
+the P07 PlanDraft or a persistent versioned plan. Its SHA-256 fingerprint includes
+the complete envelope (including acceptance, scope and permissions).
+`PlanApproval` binds a controller-supplied source and timestamp to that fingerprint
+and session. All tasks and bounded repairs reuse it; changed scope, criteria,
+permissions, revisions, mode or limits cannot reuse an old fingerprint. This is
+authorization matching, not authentication of a user or approval service.
+
+The controller translates an already applicable user authorization into this record;
+it must not ask again merely because a task or repair starts. Delivery authorization
+is separate and must cover the verified diff/snapshot; actual delivery is implemented
+in P12. P02 neither commits nor grants shell/network access.
 
 ---
 
@@ -1968,6 +2032,21 @@ task duration
 ```
 
 V1 may use a single append-only `events.jsonl` per session, written by the controller. No distributed tracing service or event-sourcing framework is required.
+
+P02 defines immutable WorkflowEvent records and a synchronous EventWriter protocol
+in `core/workflow/events.py`, tested using FakeEventWriter. Events carry session/task
+identity, sequence, runtime timestamp, revision, kind, concise reason, state edges,
+evidence IDs and source references. A start event precedes each adapter call; a
+state-change event is accepted by the writer before the in-memory state changes.
+The engine stops dispatch and raises EventWriteError if an append fails, without
+claiming a completed result. P03 supplies durable storage and real tool events;
+an in-memory Fake writer is not crash-safe persistence.
+
+P02 engines are one-shot: repeated or overlapping `run()` calls are rejected.
+External asyncio cancellation records known cancelled states and an interrupted
+result, then re-raises CancelledError. The result remains inspectable through
+`engine.result`; recording errors instead require inspection of the writer and
+read-only state. Resume and reconciliation are deferred to P12.
 
 OpenTelemetry can be added later.
 
@@ -2329,6 +2408,11 @@ FakeReviewer
 Use them to test the complete lifecycle.
 
 Define lifecycle event emission and test plan/task event ordering with a fake event writer. QualityGate must reject missing, non-passing, or stale required evidence. Do not build a separate event-sourcing subsystem.
+
+P02 implements these components in `src/coding_agent/core/workflow/`, with explicit
+scripted doubles in `src/coding_agent/testing.py`. D03 decisions are in Section 28.1.
+Fake scripts must provide results explicitly and fail when exhausted; they never run
+commands or certify real code. See DEV_PLAN.md for actual validation and platform scope.
 
 ---
 
@@ -2693,6 +2777,11 @@ Verified Diff
  ↓
 Commit
 ```
+
+These are authorization boundaries, not mandatory repeated prompts. All modes retain
+the boundaries in Section 28.1. Reuse applicable existing authorization, record what
+plan version or delivered snapshot it covers, and obtain a new decision only when
+the requested action exceeds it. An execution PlanApproval cannot authorize a commit.
 
 ---
 

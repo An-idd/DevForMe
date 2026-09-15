@@ -1,4 +1,4 @@
-"""Pure transition constraints. Only the future Workflow Engine writes task state."""
+"""Pure transition constraints. Only WorkflowEngine writes task state."""
 
 from enum import StrEnum
 from types import MappingProxyType

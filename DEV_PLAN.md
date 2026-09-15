@@ -2,7 +2,7 @@
 
 > 版本：V1 / 2026-09-15
 > 依据：[开发规格](CODING_AGENT_DEVELOPMENT_SPEC.md)，重点参考 §16、§24、§29–31、§35–39、§42、§44–48。
-> 当前状态：P01 领域基础已完成并通过验收；本次授权仅 P01。P02–P12 尚未开始，CLI、工作流执行和模型接入尚未实现。
+> 当前状态：P01、P02 已完成并通过阶段验收；本次授权止于 P02。P03–P12 尚未开始，真实工具、CLI 与模型接入尚未实现。
 
 ## 1. 目标与推进方式
 
@@ -42,25 +42,25 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 
 ## 3. 开工前需要统一的规格事项
 
-以下保留统一事项的原问题、结论与后续待办，不静默覆盖原规格。D01、D02 已在 P01 解决；其他事项在对应阶段先记录结论并同步冲突章节，再实现相关模型或行为。能由现有需求确定的实现选择自行处理；只有影响用户目标、授权或交付范围的未决问题才需要用户回答。
+以下保留统一事项的原问题、结论与后续待办，不静默覆盖原规格。D01、D02 已在 P01 解决，D03 已在 P02 解决；其他事项在对应阶段先记录结论并同步冲突章节，再实现相关模型或行为。能由现有需求确定的实现选择自行处理；只有影响用户目标、授权或交付范围的未决问题才需要用户回答。
 
 | 编号 | 最迟阶段 | 现有问题 | 建议与完成条件 |
 | --- | --- | --- | --- |
 | D01 | P01 / 已解决 | §10 将 Tests/Review 画为后续任务，§11 又要求每任务验证后才能解锁下游 | 已同步 §10–11：业务任务包含实现、必需测试和适用审查；交付前另做全局集成验证。仅 VERIFIED 依赖解锁下游；图不持有可写运行状态 |
 | D02 | P01 / 已解决 | §7、§9、§29 的 Risk 示例结构不同；AcceptanceSpec 缺少统一模型 | 已同步 §7、§9.1、§23–24、§29.1：统一 RiskProfile，总等级覆盖已评估维度；AcceptanceSpec 使用稳定 criterion/check ID；Evidence 显式记录来源、结果、时间和计划/上下文/工作区版本 |
-| D03 | P02 | FAST 的精简流程与总体 Review、§39 两次审批要求关系不清 | 先列出模式策略表；默认 STANDARD 遵循现有计划/提交审批。明确各模式必需检查、审查及授权复用规则后再启用 |
+| D03 | P02 / 已解决 | FAST 的精简流程与总体 Review、§39 两次审批要求关系不清 | 已同步 §11–12、§25–28、§31、§37、§39：所有模式保留声明检查及计划/交付授权边界；FAST 仅低风险且未声明审查时省略 Reviewer，仍经过 REVIEWING 和门禁；中/高风险分别至少 STANDARD/STRICT；完整 RunSpec 指纹匹配的授权在任务/修复间复用，交付授权单独处理 |
 | D04 | P04 | §18、§37 Phase 4、§49 对 Worktree 所属版本有不同表述 | 按 §37 将顺序执行所需的 Worktree 能力纳入 P04，任务并行保持后续范围；开工时统一相关章节和工作区生命周期 |
 | D05 | P03 | `network: false`、受限 shell 和控制记录保护缺少具体执行边界 | 确定并验证本地执行后端实际可强制的权限能力；无法满足所请求限制时拒绝执行，不能用命令前缀匹配声称隔离成立 |
 | D06 | P05 | 尚未选择真实 Provider 与可用凭据 | 选择一个可用 Provider，并定义结构化输出、工具调用、超时及用量返回；缺少凭据时继续离线实现，明确记录真实接入尚未验证 |
 
 ## 4. 阶段总览
 
-状态仅使用 `NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`DONE`。P01 已完成；`DONE` 必须附交付物与检查证据，见 §8 的 P01 验收记录。
+状态仅使用 `NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`DONE`。P01、P02 已完成；`DONE` 必须附交付物与检查证据，见 §8 的阶段验收记录。
 
 | 阶段 | 依赖 | 主要交付 | 状态 |
 | --- | --- | --- | --- |
 | P01 领域基础 | 无 | 领域模型、DAG 校验、状态转换约束、基础工程配置 | DONE |
-| P02 工作流引擎 | P01 | 单任务调度、状态机、QualityGate、Fake 完整生命周期 | NOT_STARTED |
+| P02 工作流引擎 | P01 | 单任务调度、状态机、QualityGate、Fake 完整生命周期 | DONE |
 | P03 工具与执行记录 | P02 | PolicyEngine、Tool Runtime、持久事件、工件记录 | NOT_STARTED |
 | P04 工作区 | P03 | Git 状态/差异/快照、Worktree、受控恢复与清理 | NOT_STARTED |
 | P05 模型适配 | P04 | Provider 接口与一个真实实现 | NOT_STARTED |
@@ -88,10 +88,10 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 
 ### P02 — 工作流引擎
 
-- [ ] 处理 D03，形成明确的完成、验证、审批和重试策略表。
-- [ ] 实现 TaskScheduler、StateMachine、WorkflowEngine、QualityGate；并发固定为 1。
-- [ ] 接入 FakeCoder、FakeVerifier、FakeReviewer，覆盖成功、验证失败、审查修复、阻塞和取消。
-- [ ] 定义运行事件及 Fake writer，关联任务、计划版本与状态变更。
+- [x] 处理 D03，形成明确的完成、验证、审批和重试策略表。
+- [x] 实现 TaskScheduler、StateMachine、WorkflowEngine、QualityGate；并发固定为 1。
+- [x] 接入 FakeCoder、FakeVerifier、FakeReviewer，覆盖成功、验证失败、审查修复、阻塞和取消。
+- [x] 定义运行事件及 Fake writer，关联任务、计划版本与状态变更。
 
 **验收：** Agent 无法自行写入 VERIFIED；缺失、非通过、过期证据均不能过门禁；前置任务失败时下游不运行；失败循环有终止路径；生命周期事件顺序可核查。
 
@@ -239,6 +239,7 @@ python -m mypy src/coding_agent
 | 2026-09-15 / 规划 | 建立 DEV_PLAN.md 与 AGENTS.md；实现尚未开始 | 相对链接、12 阶段顺序/依赖、代码块校验通过；产品检查未运行 | 下一个实现范围为 P01，先统一 D01/D02 | 本文件与 AGENTS.md |
 | 2026-09-15 / 复杂度设计 | 同步复杂度分级、动态重评估与大型重构要求；实现阶段仍未开始 | 三份文档链接/结构、12 阶段依赖及 Diff 格式校验通过；产品检查未运行 | P06 提供依据、P07 评估/分批计划、P11 重评估，P09/P12 验证重构行为 | 规格 §29、§42；本文件；AGENTS.md |
 | 2026-09-15 / P01 开始 | 核实目录仅有三份文档，无 Git 仓库及已有产品代码；范围为 D01/D02、领域模型、图与状态校验和基础检查配置 | 已找到本机 Python 3.12.14；测试工具尚未配置，产品检查未运行 | 建立项目虚拟环境并完成 P01 验收；不推进 P02 | 规格 §7–11、§24、§29.1、§46–47 |
+| 2026-09-15 / P02 开始 | 用户授权 P02；初始工作区干净，核对现有领域模型与 D03；实施模式策略、串行工作流、证据门禁、Fake 组件与事件 | 当前宿主 macOS，已有 Python 3.12.10；P02 检查尚未运行。uv 清单读取被沙箱阻止，经审批后读取成功 | 完成离线生命周期和故障验证；不推进 P03 或真实模型接入 | 规格 §11–12、§24–28、§31、§39；本文件 |
 
 ### P01 验收记录（2026-09-15）
 
@@ -286,12 +287,74 @@ QualityGate 不是 P01 结构校验的能力。真实 Provider 与其他宿主�
 
 代码修改按逻辑单元形成可审查 Diff。在已授权范围内推进实现和验证；提交与外部发布按当前授权处理，不把“写开发计划”解释为立即实现或提交全部阶段。
 
+### P02 验收记录（2026-09-15）
+
+**实际交付：** [工作流契约](src/coding_agent/core/workflow/contracts.py)、
+[模式策略](src/coding_agent/core/workflow/policy.py)、
+[调度与状态前置条件](src/coding_agent/core/workflow/scheduling.py)、
+[QualityGate](src/coding_agent/core/workflow/gate.py)、
+[WorkflowEngine](src/coding_agent/core/workflow/engine.py)、
+[事件契约](src/coding_agent/core/workflow/events.py)、
+[公开导出](src/coding_agent/core/workflow/__init__.py)、[Fake 组件](src/coding_agent/testing.py)。
+更新 README 与规格中的完成、审批和执行行为；未增加依赖。
+
+**实现决策与 D03：**
+
+- RunSpec 是本阶段的不可变执行输入，包含图、起始版本、模式和限制；不提前实现 P07
+  PlanDraft 或版本化计划持久化。PlanApproval 绑定整个 RunSpec 指纹及会话并记录来源/时间。
+- 默认 STANDARD；中风险不能使用 FAST，高风险至少 STRICT。FAST 不删除必需检查；
+  不需要 Reviewer 时在 REVIEWING 下记录适用性判断，再执行门禁。所有模式保留原规格的
+  执行/交付授权边界；已适用授权不重复询问，执行授权不能充当提交授权。
+- WorkflowEngine 独占状态写入，TaskScheduler/StateMachine 只做查询/校验；引擎单次运行，
+  不提供重置或恢复入口。首个非 VERIFIED 任务停止本次调度，未开始任务被阻塞或取消。
+- 必需非审查检查须逐 criterion/check 配对，至少一个；旧证据、不匹配、重复、非通过和
+  缺失记录不能过门禁。审查必须匹配任务与三个版本，blocking/major 阻止完成，minor 保留。
+  声明的审查检查由控制器据 ReviewResult 生成 REVIEW Evidence；不支持带命令的审查检查，
+  不会伪造其执行。Verifier 不能提供 REVIEW 来替代检查，Reviewer 不能提供测试结果。
+- 任务所有 Coder 调用共用 max_attempts（默认 3），审查修复另受 max_review_fixes（默认 2）
+  限制；RunSpec.max_total_attempts（默认 30）跨任务计数。只有明确失败触发代码修复；
+  缺失/无效/不可用/不确定结果阻塞，版本变更或预算耗尽要求重规划。适配器默认 60 秒
+  协作式超时。P11 再增加跨计划/批次的持久预算、诊断和重规划。
+- 每次派发前和状态修改前写入事件，writer 失败立即抛 EventWriteError 并停止；外部取消
+  记录中断结果后重新抛出 CancelledError。计数、历史失败与已知状态可检查，不自动重跑。
+- tasks_verified 只表示图中任务在各自快照上的门禁通过（空图不派发任务）。它不表示整个
+  需求或最终代码通过；后续任务可能使早期证据过期，最终集成/交付仍由后续阶段完成。
+
+**验证环境：** macOS / zsh，项目 `.venv`，Python 3.12.10、Pydantic 2.13.5、
+pytest 9.1.1、Ruff 0.16.7、mypy 1.20.2；`pip install -e '.[dev]'` 成功。
+本次先重跑 P01 基线 262 项，再执行 P02 测试及完整检查。
+
+| 检查 | 实际结果 |
+| --- | --- |
+| `python -m pytest` | 382 passed；原 P01 262、P02 工作流 81、门禁 25、调度/模式 14 |
+| `python -m ruff check .` | All checks passed |
+| `python -m ruff format --check .` | 20 files already formatted |
+| `python -m mypy src/coding_agent` | Success: no issues found in 13 source files |
+| `python -m pip check` | No broken requirements found（沙箱禁止 pip 用户缓存，检查仍成功） |
+| 差异检查 | `git diff --check` 通过；未提交或 push |
+| 文档/领域边界 | 本地 Markdown 链接与代码块配对检查通过；11 个 P02 JSON Schema 可生成；core 无直接 OS/进程、CLI 或模型供应商导入；AGENTS.md 无改动 |
+
+测试位于 [工作流测试](tests/test_workflow.py)、[门禁测试](tests/test_workflow_gate.py)、
+[调度与模式测试](tests/test_workflow_scheduling.py)。覆盖菱形依赖、只读状态、审批指纹、
+失败修复与历史保留、审查修复后再验证、共享预算、超时、取消、无效适配器结果、
+快照/上下文变更，以及正常生命周期 17 个事件位置逐一模拟写入失败。
+
+**过程中的失败及处理：** uv 读取默认缓存被沙箱拒绝，经审批后得到已安装 Python 清单；
+首次 pip 安装因沙箱 DNS/网络限制失败，经联网审批后成功。首轮 Ruff 检出导入顺序和长行，
+mypy 检出一处空列表缺少类型标注；已修正并通过完整检查。未删除原测试或放宽验收。
+
+**未实现/未验证：** P03–P12；所有适配器与 writer 均为本地受信 Fake，事件/证据仅存内存。
+本阶段只比较外部提供的版本值，不计算真实 Git/文件快照，也不鉴权审批或 Evidence.source。
+协作式 asyncio 超时不是进程隔离保证；持久写入、真实权限控制、来源核查、恢复和最终交付
+仍须后续实现。P02 在 macOS 验证，Windows 上仅保留 P01 历史验收，P02 Windows 未重跑；
+未验证其他平台、真实 Provider 或竞品优势。本阶段不执行真实 Agent 工具或提交代码。
+
 ## 9. 下一步执行单元
 
-P01 已完成，本次止于此。下一次获得实施授权后推进 **P02：工作流引擎**：
+P02 已完成，本次止于此。下一次获得实施授权后推进 **P03：工具运行时与持久留痕**：
 
-1. 处理 D03，明确模式策略、完成门禁、审批复用和重试预算。
-2. 在现有领域模型之上实现单任务调度、状态机、WorkflowEngine 和 QualityGate。
-3. 使用 FakeCoder/FakeVerifier/FakeReviewer 与 Fake writer 验证生命周期。
-4. 验证缺失、非通过和过期证据不能过门禁；只有 Workflow Engine 写入任务状态。
-5. 完成 P02 检查后再更新阶段状态，保留失败与未验证项。
+1. 处理 D05，验证执行后端实际可强制的文件/进程/网络权限；无法满足的限制明确拒绝。
+2. 建立 ToolRequest、ToolResult 与 ALLOW/ASK/DENY 策略，全部副作用经过 Tool Runtime。
+3. 接入持久 JSONL writer 与工件记录，在副作用前落盘请求，之后记录关联的真实结果。
+4. 保护控制记录，覆盖日志失败、超时、路径/链接越界与结果缺失场景；保留不确定语义。
+5. 在临时目录完成 P03 检查，再更新阶段状态；不把 Worktree 当作进程或网络隔离。
