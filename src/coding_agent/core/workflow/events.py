@@ -6,6 +6,7 @@ from pydantic import AwareDatetime, model_validator
 
 from ..knowledge import InitializationOperation, InitializationRevision
 from ..models import DomainModel, Identifier, NonEmptyStr, PositiveInt
+from ..planning import PlanningOperation, PlanningRevision
 from ..provider import ModelCallRequest, ModelCallResult
 from ..state import TaskState, validate_transition
 from ..tools import ArtifactRef, ToolRequest, ToolResult
@@ -18,7 +19,7 @@ class WorkflowEvent(DomainModel):
     timestamp: AwareDatetime
     session_id: Identifier
     task_id: Identifier | None
-    revision: Revision | InitializationRevision
+    revision: Revision | InitializationRevision | PlanningRevision
     kind: Literal[
         "session_started",
         "plan_accepted",
@@ -53,7 +54,7 @@ class WorkflowEvent(DomainModel):
 
     @model_validator(mode="after")
     def validate_state_event(self) -> Self:
-        if isinstance(self.revision, InitializationRevision):
+        if isinstance(self.revision, (InitializationRevision, PlanningRevision)):
             if self.kind not in {
                 "tool_requested",
                 "tool_finished",
@@ -63,8 +64,13 @@ class WorkflowEvent(DomainModel):
                 raise ValueError("pre-plan initialization cannot emit workflow outcomes")
             if self.task_id is not None or self.evidence_ids:
                 raise ValueError("initialization has no business task identity or evidence")
+            expected_operation = (
+                InitializationOperation
+                if isinstance(self.revision, InitializationRevision)
+                else PlanningOperation
+            )
             if self.tool_request is not None and not isinstance(
-                self.tool_request.invocation, InitializationOperation
+                self.tool_request.invocation, expected_operation
             ):
                 raise ValueError("initialization records only controller operations")
         if self.kind == "task_state_changed":
@@ -88,7 +94,7 @@ class WorkflowEvent(DomainModel):
         if (
             self.kind in {"tool_requested", "tool_finished"}
             and self.task_id is None
-            and not isinstance(self.revision, InitializationRevision)
+            and not isinstance(self.revision, (InitializationRevision, PlanningRevision))
         ):
             raise ValueError("tool events require task identity")
         if (self.model_request is not None) != (self.kind == "model_requested"):

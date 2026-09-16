@@ -3,10 +3,10 @@
 按项目规范执行编码任务，以关联代码快照的证据判断完成状态。
 
 当前实现 P01 领域基础、P02 串行工作流、P03 工具运行时、P04 会话工作区、
-P05 模型适配及 P06 项目初始化 CLI。包含 QualityGate、有限修复、受控工具、持久事件、
+P05 模型适配、P06 项目初始化及 P07 计划 CLI。包含 QualityGate、有限修复、受控工具、持久事件、
 源码快照、Worktree、OpenAI Responses 适配和有来源的项目知识。
-P05/P06 模型行为通过离线模拟测试，另有实验性 CodexCoder 接入本地 Codex 编码循环；
-真实账号/API 冒烟待完成。plan/run CLI、计划上下文集成、真实验证 Evidence 与最终交付
+P05–P07 模型行为通过离线模拟测试，另有实验性 CodexCoder 接入本地 Codex 编码循环；
+真实账号/API 冒烟待完成。run CLI、Coder 的完整计划上下文集成、真实验证 Evidence 与最终交付
 尚未实现；跨平台复验及阶段状态见开发计划。
 
 ## 开发环境
@@ -89,8 +89,62 @@ python3 -m venv .venv
 未读文件的内容变化不构成已读来源的变化，任务涉及它时必须通过 focus 补充探索。
 
 应用入口为 `await coding_agent.application.initialize(Path(...), ...)`；
-返回状态、知识修订、变化来源、问题与日志位置，供 P07/P08 的首次 plan/run 流程复用。
+返回状态、知识修订、变化来源、问题与日志位置；P07 首次 plan 已复用，run 集成仍待 P08。
 初始化修订没有计划版本，不能作为任务 VERIFIED 或 P04 全工作区快照使用。
+
+## P07 计划、导入与查看
+
+只生成计划，不执行仓库程序或修改业务代码：
+
+~~~powershell
+.\.venv\Scripts\agent.exe plan '抽取库存接口并保持现有行为' --path 'D:\Projects\Example' --model MODEL --focus src/service.py
+.\.venv\Scripts\agent.exe plan --path 'D:\Projects\Example' --requirement requirement.json --model MODEL
+.\.venv\Scripts\agent.exe plan --path 'D:\Projects\Example' --draft draft.json --refresh
+.\.venv\Scripts\agent.exe status --path 'D:\Projects\Example'
+.\.venv\Scripts\agent.exe graph --path 'D:\Projects\Example'
+~~~
+
+首次 plan 复用初始化；知识过期时需 --refresh，必要问题未解决时返回 blocked。
+--model 显式调用一次 OpenAI Planner（需 OPENAI_API_KEY，16,384 输出 tokens、60 秒上限）。
+离线 --draft 接收 [PlanDraft](src/coding_agent/core/planning.py) JSON；
+--requirement 接收 RequirementContract JSON。输入文件路径相对于目标仓库。
+未提供模型或草稿时明确提示缺少输入，不自动编造验收任务。
+
+计划保留原始目标、复杂度的四个维度及源码依据、独立风险、规则 ID、验收/检查 ID、
+当前任务依赖和后续里程碑。任务写入范围必须列出具体文件，不能使用通配符；
+重叠写入必须有依赖顺序。--allow 可限定提案的最大写入范围，--forbid 禁止读取相关路径，
+--mode 选择工作流模式，--max-attempts 限制当前任务的尝试分配；Small 不能降低高风险检查。
+现有目标源码尚未读取时保存 blocked 提案，提示通过 --focus 补充探索。
+这些结构检查不等于证明模型理解完整或验收充分，提案仍需用户审阅。
+
+产物位于 .agent/：
+
+- plan-<id>-v<N>.json：不可变 PlanVersion，包含需求、知识修订、代码内容清单/指纹、
+  设置、草稿和阻塞原因。起始快照覆盖探索范围内未提交、未跟踪及未被 Explorer 摘录的文件。
+- 同名 .md：便于审阅的范围、风险、验收、基线检查与待办摘要。
+- plan.json：当前计划索引；不是 PlanDraft，也不表示已授权执行。
+- plan-<attempt>/events.jsonl：本次规划工具/模型请求和结果，与 init 共用独占锁。
+- imported-plan-<digest>.json：导入时保留的原始 PlanVersion。
+
+再次生成同一需求的版本时必须提供 --reason，旧文件保留。--new 建立独立提案历史；
+它不实现运行中的重规划或预算重置。当前阶段保守拒绝删除/重写旧验收、改变授权上限、
+移除原任务/里程碑或解除没有明确答案的必要问题；P11 再接入带执行证据的变更协调。
+大型重构必须声明行为不变量与基线检查；未来任务只留在 pending 里程碑中，不可调度。
+
+使用 --import .agent/plan-<id>-v<N>.json 导入保存的版本文件；它会重查结构、来源、
+知识/代码新鲜度及当前设置，保留原始导入记录，并保存新的本地版本。
+包含已识别未脱敏凭据的版本会被拒绝导入，原文件保留。
+源文件或用户规则变化会让旧计划失效；Git HEAD 相同也不会跳过检查。
+导入不接受模型自述的审批，原审批必须匹配新的完整 RunSpec 指纹才适用。
+
+status/graph 只读，不初始化、不调用模型、不生成日志；可加 --json。
+它们显示当前提案与阻塞项，执行状态为 not_tracked，不推测任务完成。
+proposed 退出 0，blocked/stale/输入错误退出 2；真实模型/平台验证与自动执行仍待后续阶段。
+
+应用入口：application.planning.plan、inspect_plan；run_spec 构造供运行时使用的提案。
+RunSpec 绑定整个 PlanVersion 的摘要指纹，并将禁止读取范围传给任务；
+WorkflowEngine 仍要求匹配的 PlanApproval。批次结果保留 pending_milestones，
+不能据此宣称整个需求、最终集成检查或交付已完成。
 
 ## 领域边界
 

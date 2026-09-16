@@ -6,6 +6,7 @@ from .paths import CONTROL_NAMES as CONTROL_NAMES
 from .paths import glob_matches as glob_matches
 from .paths import path_permitted as path_permitted
 from .paths import relative_parts as relative_parts
+from .planning import PlanningOperation
 from .tools import Decision, Git, Patch, PolicyDecision, Shell, ToolRequest
 from .workspace import WorkspaceOperation
 
@@ -22,7 +23,7 @@ class PolicyEngine:
         workspace_controller: bool = False,
     ) -> PolicyDecision:
         invocation = request.invocation
-        if isinstance(invocation, InitializationOperation):
+        if isinstance(invocation, (InitializationOperation, PlanningOperation)):
             return PolicyDecision(
                 decision=Decision.DENY, reason="initialization is controller-only"
             )

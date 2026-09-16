@@ -36,6 +36,8 @@ class RunSpec(DomainModel):
     graph: TaskGraph
     revision: Revision
     mode: WorkflowMode = WorkflowMode.STANDARD
+    plan_revision: NonEmptyStr | None = None
+    pending_milestones: tuple[Identifier, ...] = ()
     max_review_fixes: Annotated[int, Field(strict=True, ge=0)] = 2
     max_total_attempts: PositiveInt = 30
     worker_timeout_seconds: Annotated[float, Field(strict=True, gt=0, allow_inf_nan=False)] = 60.0
@@ -109,6 +111,7 @@ class WorkflowResult(DomainModel):
     reviews: tuple[ReviewResult, ...]
     revision: Revision
     reason: NonEmptyStr
+    pending_milestones: tuple[Identifier, ...] = ()
 
 
 class Coder(Protocol):

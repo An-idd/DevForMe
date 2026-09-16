@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
+from typing import Self
 from uuid import uuid4
 
 from ..context.explorer import END, START, render_summary
@@ -21,6 +22,7 @@ from ..core.knowledge import (
 )
 from ..core.models import ScopePolicy
 from ..core.paths import CONTROL_NAMES, path_permitted, relative_parts
+from ..core.planning import PlanningOperation, PlanningRevision
 from ..core.tools import Decision, ToolRequest, ToolResult
 from ..core.workflow import EventWriteError, WorkflowEvent
 from ..runtime import _fileio as io
@@ -85,14 +87,14 @@ class InitializationRuntime:
         self.sanitizer = sanitizer or Sanitizer()
         self.control = self.root / ".agent"
         self.session_id = "init-" + uuid4().hex
-        self.revision = InitializationRevision(
+        self.revision: InitializationRevision | PlanningRevision = InitializationRevision(
             context_revision="uninitialized", workspace_revision="not-yet-inspected"
         )
         self._agent_fd: int | None = None
         self._lock_fd: int | None = None
         self.journal: JsonlJournal
 
-    def __enter__(self) -> "InitializationRuntime":
+    def __enter__(self) -> Self:
         try:
             with self.files.directory() as root_fd:
                 try:
@@ -215,7 +217,9 @@ class InitializationRuntime:
         )
         return KnowledgeState(snapshot, prefix, suffix, guide, metadata)
 
-    def _record[T](self, operation: InitializationOperation, action: Callable[[], T]) -> T:
+    def _record[T](
+        self, operation: InitializationOperation | PlanningOperation, action: Callable[[], T]
+    ) -> T:
         request = ToolRequest(request_id="init-" + uuid4().hex, invocation=operation)
         journal = self.journal
         journal.begin_operation(request.request_id)
@@ -231,7 +235,7 @@ class InitializationRuntime:
                 task_id=None,
                 revision=revision,
                 kind="tool_requested",
-                reason=f"controller initialization {operation.operation}",
+                reason=f"controller {operation.kind} {operation.operation}",
                 tool_request=request,
             )
             journal.write(requested)
@@ -240,7 +244,7 @@ class InitializationRuntime:
             value = None
             try:
                 value = action()
-                status, reason = "succeeded", f"initialization {operation.operation} completed"
+                status, reason = "succeeded", f"{operation.kind} {operation.operation} completed"
             except EventWriteError:
                 journal.invalidate()
                 raise

@@ -8,6 +8,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from ..core.knowledge import InitializationRevision
+from ..core.planning import PlanningRevision
 from ..core.provider import (
     GenerationSettings,
     Message,
@@ -38,7 +39,7 @@ class ModelRuntime:
         provider: ModelProvider,
         *,
         journal: JsonlJournal,
-        read_revision: Callable[[], Revision | InitializationRevision],
+        read_revision: Callable[[], Revision | InitializationRevision | PlanningRevision],
         task_id: str | None = None,
     ) -> None:
         self._provider = provider

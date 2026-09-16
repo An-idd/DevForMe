@@ -1,7 +1,7 @@
 # Verified Coding Agent — Development Specification
 
-> Status: Draft / V1  
-> Purpose: This document is the source of truth for Codex implementation.  
+> Status: Draft / V1
+> Purpose: This document is the source of truth for Codex implementation.
 > Core idea: **Project Initialization + Executable Plan + Task Graph + Execution Trace + Verification + Evidence + Deterministic Workflow**
 
 ---
@@ -606,6 +606,89 @@ Record complexity and its reasons, unknowns, and execution strategy separately f
 Show users a readable summary of scope, validation, and unresolved decisions. Users must not need to interpret the serialized DAG to understand the plan.
 
 Persist the plan before executing its tasks. Apply the existing approval policy to the concrete plan version. Changes during execution follow Section 27; never overwrite the previous plan silently.
+
+---
+
+## 8.1 P07 concrete planning boundary
+
+The read-only agents.planner.propose_plan function makes one recorded model call
+and returns PlanDraft. It receives the original request or an exact
+RequirementContract, captured sources, a knowledge entry index with stable IDs,
+controller settings, and the previous version where applicable. It receives no
+execution tools. Model explanations and classifications remain judgments; valid
+quotes and structure do not prove semantic completeness.
+
+PlanDraft contains RequirementContract, ComplexityAssessment, requirement-wide
+AcceptanceSpec, numbered functional-requirement coverage, PlannedTask entries,
+and a Milestone roadmap. The assessment records all four dimensions, reasons,
+unknowns, strategy, and at least one checked source reference. Each task retains
+its own TaskSpec acceptance, rule/context references and optional child assessment.
+Exactly one current milestone identifies the current graph. Pending milestones
+cannot contain placeholder tasks. Required unknowns in pending milestones remain
+visible without enabling that future work; current required unknowns block the
+proposal. Source-backed explicit answers are required to resolve decisions.
+
+The compiler validates the existing DAG and acceptance contracts, complete
+functional-requirement coverage, applicable ancestor/user rule IDs, explicit file
+scope, ordered overlapping writes, risk floors, permission ceilings and attempt
+allocation. Concrete task paths replace broad wildcard write scopes in P07
+proposals; controller scope patterns may still constrain the maximum boundary.
+Controller forbidden paths are included in each compiled task. Existing target
+files absent from the observed source set block execution pending focused
+exploration. Refactors require stable invariant criterion IDs and executable
+baseline check IDs. Baseline and final integration checks are declarations only;
+P09 must actually execute them before they can provide evidence.
+
+application.planning.plan first invokes the P06 initialization flow. Missing
+knowledge is initialized offline; stale knowledge requires explicit refresh.
+Without a provider or a supplied draft, planning reports missing input rather than
+inventing tasks or acceptance. The default model path interprets free text while
+preserving the original goal verbatim; a supplied RequirementContract must match
+exactly. Public CLI: agent plan [request] --path ROOT, --model MODEL,
+--requirement FILE, --draft FILE, --import FILE, --refresh, --focus, --forbid,
+--allow, --mode, --max-attempts, --reason and --new. Source files are relative to
+ROOT; explicit immutable .agent/plan-<id>-v<N>.json imports are controller reads,
+not a general escape from the protected-directory boundary.
+
+tools.planning.PlanningRuntime reuses P06 safe controller IO, the exclusive lock
+and durable request/result pairing. PlanningRevision/PlanningOperation distinguish
+planning records from executable workflow revisions and cannot emit task outcomes
+or Evidence. Starting snapshots reuse P04 capture: a bounded manifest of actual
+file content, modes and selection policy, including uncommitted/untracked files.
+It is neither Git HEAD nor the Explorer's selected-excerpt digest. Model work,
+input races, publication and unknown results follow the existing fail-closed
+journal and ownership rules. Scope exclusions remain explicit.
+
+Store immutable plan-<id>-v<N>.json plus a human summary, then install plan.json as
+the current index. Old versions are never overwritten. PlanVersion records the
+predecessor digest, change reason, original goal, knowledge revision, starting
+snapshot, settings, draft and computed blockers. Imports retain the original
+PlanVersion as imported-plan-<digest>.json and record its digest in the new local
+version. Importing validates freshness and the controller boundary; recognized
+unredacted credentials are rejected before archival, preserving the source file.
+An embedded model approval is not accepted. Publication rechecks knowledge, user content,
+workspace and the expected current index. Interrupted publication can leave an
+unindexed immutable version; preserve it for inspection rather than overwriting.
+
+Revisions preserve the requirement, existing acceptance, task/criterion identity,
+roadmap scope, invariant/baseline checks and controller budgets. Removing or
+advancing a milestone without runtime evidence is refused in this phase. P11 adds
+runtime reconciliation and persistent consumed budgets; --new creates a separate
+proposal history, not an execution retry or a way to reset an active session.
+
+RunSpec now includes optional plan_revision (the full PlanVersion digest) and
+pending_milestones. Both participate in its approval fingerprint; changing future
+scope or final acceptance cannot retain an approval merely because the current
+graph is unchanged. WorkflowResult carries pending_milestones after a batch.
+WorkflowEngine still owns state transitions and requires PlanApproval; P07 creates
+no execution authorization. Final requirement completion and delivery remain P12.
+
+agent status and agent graph read the current proposal without initialization,
+model calls, journals or state mutations. Status rechecks knowledge and the actual
+workspace and reports proposed/blocked/stale, authorization applicability and
+execution_status=not_tracked. A Python caller can supply PlanApproval for exact
+fingerprint matching. P07 does not infer workflow progress or final completion
+from a saved proposal. P08 integrates the actual Coder context/run command.
 
 ---
 

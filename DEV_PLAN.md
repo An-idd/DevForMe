@@ -1,8 +1,8 @@
 # Verified Coding Agent — 开发计划
 
-> 版本：V1 / 2026-09-16 / P06 初始化与 Windows 离线验证完成，真实冒烟待验证
+> 版本：V1 / 2026-09-16 / P07 计划已实现并通过 Windows 离线验证，真实冒烟待验证
 > 依据：[开发规格](CODING_AGENT_DEVELOPMENT_SPEC.md)，重点参考 §16、§24、§29–31、§35–39、§42、§44–48。
-> 当前状态：P01/P02 已完成；P03 安全修复与 Windows 适配已完成本机验证；macOS 集成复验待完成，状态为 IN_PROGRESS。用户明确授权继续 P04；P04 功能与 Windows 验收已完成，macOS 实机复验待完成，保持 IN_PROGRESS；用户明确授权继续 P05，模型适配已完成离线实现，真实 API 冒烟待验证，P05 保持 IN_PROGRESS；用户另行授权本地 coding adapter，P08 提前实现 Codex 接入基础，保持 IN_PROGRESS；用户授权继续 P06，初始化 CLI 与知识刷新已完成 Windows 离线验证，真实模型与 macOS/POSIX 复验待完成，保持 IN_PROGRESS；P07/P09–P12 尚未开始。
+> 当前状态：P01/P02 已完成；P03 安全修复与 Windows 适配已完成本机验证；macOS 集成复验待完成，状态为 IN_PROGRESS。用户明确授权继续 P04；P04 功能与 Windows 验收已完成，macOS 实机复验待完成，保持 IN_PROGRESS；用户明确授权继续 P05，模型适配已完成离线实现，真实 API 冒烟待验证，P05 保持 IN_PROGRESS；用户另行授权本地 coding adapter，P08 提前实现 Codex 接入基础，保持 IN_PROGRESS；用户授权继续 P06，初始化 CLI 与知识刷新已完成 Windows 离线验证，真实模型与 macOS/POSIX 复验待完成，保持 IN_PROGRESS；用户授权继续 P07，Planner、版本化计划和 CLI 已实现并通过 Windows 离线验证，真实模型与 macOS/POSIX 复验待完成，保持 IN_PROGRESS；P09–P12 尚未开始。
 
 ## 1. 目标与推进方式
 
@@ -66,7 +66,7 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 | P04 工作区 | P03 | Git 状态/差异/快照、Worktree、受控恢复与清理 | IN_PROGRESS |
 | P05 模型适配 | P04 | Provider 接口与一个真实实现 | IN_PROGRESS |
 | P06 Explorer / init | P05 | 项目梳理、用户规范、项目知识与增量刷新、初始化 CLI | IN_PROGRESS |
-| P07 Planner | P06 | 复杂度评估、PlanDraft 校验/编译、版本化分阶段计划、规则引用、规划 CLI | NOT_STARTED |
+| P07 Planner | P06 | 复杂度评估、PlanDraft 校验/编译、版本化分阶段计划、规则引用、规划 CLI | IN_PROGRESS |
 | P08 Coder | P07 | 引擎 adapter、受约束执行与留痕；当前仅提前实现 Codex 基础接入 | IN_PROGRESS |
 | P09 Verification | P08 | 测试/构建/静态检查、结果解析、版本化 Evidence | NOT_STARTED |
 | P10 Reviewer | P09 | 独立上下文审查、结构化问题、规范与文档检查 | NOT_STARTED |
@@ -143,17 +143,19 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 **验收：** 能解释代表性模块关系并指向源码；重复 init 不覆盖用户规则；来源变化可检测；未执行的验证命令没有“通过”记录；无需完整调用图即可完成初始化。
 
 **当前边界：** 离线模式提供有来源的代表性观察；可选 OpenAI 模型解释模块职责/关系，
-其行为通过 Fake 与 SDK mock 验证。首次 plan/run 共用 API 已提供，CLI 集成分别归 P07/P08。
+其行为通过 Fake 与 SDK mock 验证。首次 plan/run 共用 API 已提供；P07 已接入 plan，run 集成仍归 P08。
 真实模型探索与 macOS/POSIX 初始化尚待实机验证，P06 保持 IN_PROGRESS。
 
 ### P07 — Planner 与可执行计划
 
-- [ ] 编译 RequirementContract + RepoSummary + 项目知识为 PlanDraft，再校验为 TaskGraph。
-- [ ] 在计划中记录 complexity、reasons、unknowns、execution_strategy 及支持来源，复杂度与 RiskProfile 分开处理。
-- [ ] 为 Large 任务保留整体里程碑及待完成范围，详细编译当前批次；每个业务任务包含自己的验收，后续不确定任务不能直接调度。
-- [ ] 校验依赖、任务范围、验收完整性与规则引用；启发式判断和确定性结构校验分别处理。
-- [ ] 保存计划版本、稳定任务/criterion ID、起始工作区和上下文修订；显示可读范围与验证摘要。
-- [ ] 提供 `agent plan`、保存计划导入校验，以及 graph/status 的当前阶段能力。
+- [x] 编译 RequirementContract + RepoSummary + 项目知识为 PlanDraft，再校验为 TaskGraph。
+- [x] 在计划中记录 complexity、reasons、unknowns、execution_strategy 及支持来源，复杂度与 RiskProfile 分开处理。
+- [x] 为 Large 任务保留整体里程碑及待完成范围，详细编译当前批次；每个业务任务包含自己的验收，后续不确定任务不能直接调度。
+- [x] 校验依赖、任务范围、验收完整性与规则引用；启发式判断和确定性结构校验分别处理。
+- [x] 保存计划版本、稳定任务/criterion ID、起始工作区和上下文修订；显示可读范围与验证摘要。
+- [x] 提供 `agent plan`、保存计划导入校验，以及 graph/status 的当前阶段能力。
+- [ ] 用真实模型在代表性项目上验证复杂度判断、需求/规则覆盖与计划可执行性。
+- [ ] 在 macOS/POSIX 实机复验计划文件、锁、导入与发布故障路径。
 
 **验收：** 非法图不能进入执行；计划先保存再执行；旧计划不被覆盖；导入计划检查来源变更与适用授权。缺少必需信息时产生明确待决项。覆盖低复杂度/高风险组合、未知依赖与分批计划；不得因 Small 降低必要验证，也不得因当前批次全部 VERIFIED 就忽略后续必需范围。
 
@@ -828,12 +830,97 @@ P05 API 和 P08 Codex 账号冒烟继续保留。23 项跳过分别为 18 项 ma
 Planner/run CLI、Verification 和自动恢复尚未实现。用户随后授权提交本次 P06 实现、测试及文档；
 阶段状态与未验证项保持不变，未授权推送。
 
+### P07 开始（2026-09-16）
+
+用户在提交 5f81f99 后授权继续，按下一阶段推进 P07。开工时工作区干净；
+保留 P03–P06/P08 的真实模型、账号和跨平台复验待办。范围仅只读 Planner、
+计划编译/版本化、保存计划导入、plan/graph/status CLI，不执行 Coder 或仓库验证命令。
+复杂度 large、风险 high：知识新鲜度、任务图、规则/验收覆盖、持久控制记录和授权指纹耦合。
+
+实现决策：复用 P06 初始化控制器的无跟随 IO、独占锁与请求/结果记录，
+规划阶段使用独立 PlanningRevision/PlanningOperation，不伪造工作流状态。
+起始代码版本复用 P04 全范围文件清单/内容指纹，覆盖未提交及 Explorer 未读取的文件。
+模型只返回 PlanDraft，确定性校验后保存不可变计划及可读摘要；执行授权另行核对。
+默认不调用真实模型；离线输入为用户提供的结构化草稿，缺少模型/草稿时明确阻塞。
+当前批次与未来里程碑分开，未细化任务不进入 TaskGraph；计划修订保留稳定 ID、验收和预算。
+P11 的运行中重规划/跨批次消耗协调、P12 的恢复与交付仍保留为后续范围。
+
+
+### P07 实现与验证记录（2026-09-16）
+
+**实际交付：** [计划模型与编译](src/coding_agent/core/planning.py)、
+[只读 Planner](src/coding_agent/agents/planner.py)、
+[计划控制器工具](src/coding_agent/tools/planning.py)、
+[应用流程](src/coding_agent/application/planning.py)、
+[CLI](src/coding_agent/cli.py) 与 [回归测试](tests/test_planning.py)。
+无新增依赖；README 与规格 §8.1 同步实际能力和后续阶段边界。
+
+- PlanDraft 绑定需求、全局验收、功能需求覆盖、任务级验收、规则/知识 ID 和来源。
+  复杂度单独记录范围、耦合、不确定性、验证难度、理由与策略；风险不能因 Small 而降低。
+  确定性检查覆盖 DAG、具体文件写范围、重叠写入顺序、权限/预算上限与适用规则。
+  尚未探索的已有目标文件阻塞提案，需用 focus 补充来源。
+- 大型需求保留整体里程碑，仅编译当前批次；后续未知范围保留为 pending，不创建可调度占位任务。
+  重构须声明行为不变量与基线检查；P07 不执行这些检查，也不生成 Evidence。
+  必要问题必须有带来源的明确答案；删除、降级或转移问题不能解除阻塞。
+- 一次只读模型调用返回结构化草稿，或读取离线草稿；没有模型/草稿时明确阻塞。
+  Planner 获得脱敏知识及实际规则 ID，模型没有工具、文件写权限或状态变更能力。
+  API/CLI 复用 P06 初始化和 P04 全范围文件快照，未提交、未跟踪及 Explorer 未读文件均参与失效检测。
+- 保存不可变 JSON/可读摘要、前驱摘要、变更原因和稳定 ID，最后安装当前计划索引。
+  原有需求、验收、待办范围、任务身份和授权上限不能在计划修订中被默默缩减或重置。
+  导入重查知识/代码新鲜度，保留原版本归档，并生成新的本地版本；拒绝受保护目录逃逸、
+  Windows ADS/别名和包含已识别未脱敏凭据的导入，原用户文件保留。
+- PlanningRevision/PlanningOperation 明确表示执行前记录；控制器复用安全文件 IO、
+  独占锁和先请求后动作的日志顺序。发布前重新核对来源、用户规则、工作区与索引，
+  失败保留旧索引/用户修改；结果未知保留锁和现场，未实现自动恢复。
+- RunSpec 审批指纹包含完整计划摘要与 pending_milestones，编译保留控制器禁止读取范围。
+  工作流结果继续携带待完成里程碑；本批次通过不能代表整个需求完成。
+  status/graph 只读，不初始化、不调用模型、不记日志；execution_status=not_tracked，
+  不从提案推测执行结果，也不生成审批。agent run 与完整 Coder 上下文仍属于 P08。
+
+**过程中的失败及处理：**
+
+- 初批测试夹具误将 tuple 当列表，并漏传策略检查必填参数；已修正夹具，
+  保留针对非法计划、权限与依赖的拒绝断言。
+- 导入归档与编译接线时遗漏方法参数/导入，专项测试和静态检查发现 TypeError/NameError；
+  已补齐调用链并重新验证，未删除测试或降低验收要求。
+- 并发运行完整 Windows 原生测试与 P07 专项时，SDK 平台信息查询触发
+  Windows 原生诊断 0x8007000e，栈位于 platform._wmi_query → OpenAI SDK get_platform。
+  该进程最终 45 passed、退出 0；现象尚未定位，不能据此称为无异常运行。
+  随后串行复验 SDK Schema 与凭据导入两项，2 passed、8.11 秒，未再次出现诊断。
+  未修改 SDK、关闭断言或跳过测试；此现象与此前已修复的无效句柄弹窗不同。
+- 中断前最后一轮回归的结果无法恢复；确认没有残留测试进程后串行重跑，并保存独立输出日志。
+  无法恢复的结果不计为通过。
+
+**验证环境：** Windows / PowerShell，Python 3.12.14，项目虚拟环境。
+
+| 检查 | 实际结果 |
+| --- | --- |
+| P06 / workflow 回归 | 132 passed，40.89 秒 |
+| 计划、初始化、工作流、模型记录、策略联合回归 | 211 passed，34.39 秒；其后新增凭据导入回归 |
+| 初轮完整 pytest | 765 passed、23 skipped，441.07 秒；其后新增凭据导入拒绝，不作为最终代码结果 |
+| 最终 P07 专项 | 45 passed，42.87 秒；包含上述未定位 WMI 诊断；串行两项复验通过 |
+| 最终串行完整 pytest | 766 passed、23 skipped，189.67 秒；未再次出现 WMI 诊断 |
+| Ruff / format | All checks passed；70 files already formatted |
+| mypy | Windows / Darwin 各 51 个源文件通过；目标检查不替代实机验证 |
+| 已安装 CLI 临时项目冒烟 | plan v1 → v2、status、graph 通过；旧版本保留；未探索文件变化后 status 为 stale、旧计划导入拒绝，均退出 2 |
+| 差异/文档 | git diff --check、UTF-8、Markdown 代码块配对及本地链接检查通过 |
+
+**未完成/未验证：** 真实模型对代表性项目的计划质量、macOS/POSIX 实机计划流程；
+P03–P06/P08 既有平台/API/账号待办继续保留。23 项跳过分别为 18 项 macOS 集成、
+3 项 POSIX 专属与 2 项真实 API/账号冒烟，均不计为通过。
+P07 保持 IN_PROGRESS；P08 的运行集成、P09 实际验证、P11 重规划/累计预算和 P12 恢复/交付
+仍未实现。用户随后授权提交本次 P07 实现、测试与文档；阶段状态与未验证项保持不变，未授权推送。
+
 ## 9. 下一步执行单元
 
 1. P06 真实探索需在代表性项目上显式运行 agent init PATH --refresh --model MODEL 并核查来源质量。
    在专用 CODEX_HOME 登录，配置 CODING_AGENT_CODEX_HOME / CODING_AGENT_CODEX_MODEL，
    显式执行 Codex 真实冒烟；OpenAI API 冒烟仍需 OPENAI_API_KEY / OPENAI_MODEL。
    两条路径分别记录，缺少配置或跳过均不计为通过。
-2. 在 macOS/POSIX 复验 P03/P04、共享记录、Codex 进程管理及 P06 初始化，保留未验证项。
-3. P06 验收后，下一实现阶段为 P07 计划/知识上下文，再完成 P08 应用流程。
+2. 用代表性项目显式执行 agent plan --model MODEL，人工核对需求覆盖、风险/复杂度、
+   来源规则、当前任务与后续里程碑；离线 Schema 测试不能代替真实计划质量验收。
+3. 在 macOS/POSIX 复验 P03/P04、共享记录、Codex 进程管理及 P06/P07 初始化/计划流程。
+   Windows WMI 诊断尚未定位；后续真实模型/SDK 平台查询时继续观察并保留实际结果。
+4. 下一实现单元为 P08：接入完整任务/知识/计划上下文、应用运行流程和 agent run，
+   在受控样本仓库完成修改并记录实际动作；保留上述未验证项，不提前声称阶段 DONE。
    Claude Code、Pi 需要先证明相同工具边界和留痕能力，不能直接开启不受控的原生工具。

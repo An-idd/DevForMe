@@ -160,6 +160,7 @@ class WorkflowEngine:
                 "reviews": tuple(self._reviews),
                 "revision": self._revision,
                 "reason": reason,
+                "pending_milestones": self._spec.pending_milestones,
             }
         )
         return self._result
