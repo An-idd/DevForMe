@@ -6,6 +6,7 @@ import sys
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -29,7 +30,6 @@ from coding_agent.tools import ToolRuntime
 
 REVISION = Revision(plan_version=1, context_revision="rules-1", workspace_revision="snapshot-1")
 STAMP = datetime(2026, 9, 15, tzinfo=UTC)
-pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX filesystem integration")
 
 
 class ToolHarness:
@@ -90,7 +90,7 @@ def tool_harness(tmp_path: Path, make_task: Callable[..., TaskSpec]) -> Iterator
     root = tmp_path / "repo"
     (root / "src").mkdir(parents=True)
     (root / "secrets").mkdir()
-    (root / "src/main.py").write_text("print('hello')\n")
+    (root / "src/main.py").write_text("print('hello')\n", newline="\n")
     (root / "secrets/private").write_text("confidential\n")
     (root / ".agent").mkdir()
     (root / ".agent/state.json").write_text("authoritative\n")
@@ -156,6 +156,7 @@ def test_scope_denial_has_no_file_side_effect(tool_harness: ToolHarness, path: s
     assert (h.root / "src/main.py").read_bytes() == original
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX FIFO integration")
 def test_symlink_hardlink_and_fifo_are_never_followed(
     tool_harness: ToolHarness, tmp_path: Path
 ) -> None:
@@ -349,6 +350,7 @@ def test_records_cannot_live_in_an_agent_writable_directory(
                 journal=journal,
                 approval=h.approval,
                 read_revision=lambda: REVISION,
+                git_executable=h.runtime.git_executable,
             )
 
 
@@ -396,7 +398,9 @@ def test_missing_backend_denies_even_with_approval(
     tool_harness: ToolHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     h = tool_harness
-    monkeypatch.setattr("coding_agent.runtime.process.sys.platform", "unsupported")
+    monkeypatch.setattr(
+        sys.modules[type(h.backend).__module__], "sys", SimpleNamespace(platform="unsupported")
+    )
     result = h.call(Shell(argv=("/usr/bin/true",)), approve=True)
     assert result.status == "denied" and "unavailable" in result.reason
     assert not result.executed
@@ -653,6 +657,7 @@ def test_workflow_and_tools_share_one_durable_sequence(
         assert kinds[-1] == "session_finished"
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mode bits")
 def test_patch_preserves_mode_and_records_missing_newline(tool_harness: ToolHarness) -> None:
     import stat
 
@@ -713,3 +718,62 @@ def test_lifecycle_cannot_advance_past_an_unresolved_request(tool_harness: ToolH
             )
         )
     assert len(inspect_journal(h.journal.directory / "events.jsonl").events) == 2
+
+
+@pytest.mark.parametrize("operation", ["add", "remove", "replace", "context"])
+def test_patch_multiline_secrets_never_reach_records(tool_harness: ToolHarness, operation: str):
+    h = tool_harness
+    secret = "-----BEGIN PRIVATE KEY-----\nSYNTHETIC-KEY-BODY\n-----END PRIVATE KEY-----\n"
+    before, after = {
+        "add": ("before\n", secret),
+        "remove": (secret, "after\n"),
+        "replace": (secret, secret.replace("SYNTHETIC-KEY-BODY", "replacement")),
+        "context": ("before\n" + secret, "after\n" + secret),
+    }[operation]
+    path = h.root / "src/main.py"
+    path.write_text(before, encoding="utf-8")
+    h.journal.sanitizer = Sanitizer((secret,))
+    result = h.call(
+        Patch(
+            path="src/main.py",
+            expected_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+            content=after,
+        )
+    )
+    assert result.status == "succeeded"
+    assert path.read_text(encoding="utf-8") == after
+    assert result.after_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+    for record in h.journal.directory.iterdir():
+        content = record.read_text(encoding="utf-8")
+        assert all(line not in content for line in secret.splitlines())
+    assert "[REDACTED]" in (h.journal.directory / result.artifacts[0].path).read_text()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="real macOS backend integration")
+def test_git_scope_and_multiline_redaction_reach_records(tool_harness: ToolHarness):
+    import subprocess
+
+    h = tool_harness
+    secret = "-----BEGIN PRIVATE KEY-----\nSYNTHETIC-KEY-BODY\n-----END PRIVATE KEY-----\n"
+    h.journal.sanitizer = Sanitizer((secret,))
+    (h.root / "src/main.py").write_text(secret, encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(h.root)], check=True)
+    subprocess.run(
+        ["git", "-C", str(h.root), "add", "src/main.py", "secrets/private", ".agent/state.json"],
+        check=True,
+    )
+    (h.root / "src/main.py").write_text("public change\n", encoding="utf-8")
+    (h.root / "secrets/private").unlink()
+    (h.root / ".agent/state.json").unlink()
+    result = h.call(Git(operation="diff"))
+    assert result.status == "succeeded", result.output
+    assert "+public change" in result.output and "[REDACTED]" in result.output
+    for content in (
+        result.output,
+        *(record.read_text(encoding="utf-8") for record in h.journal.directory.iterdir()),
+    ):
+        assert "confidential" not in content and "authoritative" not in content
+        assert all(line not in content for line in secret.splitlines())
+    inspection = inspect_journal(h.journal.directory / "events.jsonl")
+    assert not inspection.unresolved
+    assert inspection.events[-1].tool_result.status == "succeeded"

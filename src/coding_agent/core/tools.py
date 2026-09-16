@@ -8,15 +8,18 @@ from pydantic import AwareDatetime, Field, StrictBool, model_validator
 
 from .models import Command, DomainModel, Identifier, NonEmptyStr
 
+# Paths are operation data: stripping whitespace can redirect an approved action.
+ToolPath = Annotated[str, Field(min_length=1)]
+
 
 class Read(DomainModel):
     kind: Literal["read"] = "read"
-    path: NonEmptyStr
+    path: ToolPath
 
 
 class Search(DomainModel):
     kind: Literal["search"] = "search"
-    path: NonEmptyStr = "."
+    path: ToolPath = "."
     query: NonEmptyStr
 
 
@@ -24,7 +27,7 @@ class Patch(DomainModel):
     """Replace UTF-8 text after a content hash check; None means create-only."""
 
     kind: Literal["patch"] = "patch"
-    path: NonEmptyStr
+    path: ToolPath
     expected_sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")] | None
     content: str
 
@@ -32,7 +35,7 @@ class Patch(DomainModel):
 class Shell(DomainModel):
     kind: Literal["shell"] = "shell"
     argv: Command
-    cwd: NonEmptyStr = "."
+    cwd: ToolPath = "."
 
 
 class Git(DomainModel):

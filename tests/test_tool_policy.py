@@ -104,3 +104,16 @@ def test_tool_results_cannot_claim_inconsistent_success(changes: dict) -> None:
             }
             | changes
         )
+
+
+def test_tool_paths_preserve_whitespace_before_policy_and_execution():
+    from coding_agent.core.tools import Read, Search
+
+    for invocation in (
+        Read(path="src/name "),
+        Search(path="src/name ", query="needle"),
+        Patch(path="src/name ", expected_sha256=None, content="text"),
+    ):
+        request = ToolRequest(request_id="r", invocation=invocation)
+        assert request.invocation.path == "src/name "
+    assert Shell(argv=("python",), cwd=" src").cwd == " src"

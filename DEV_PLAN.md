@@ -1,8 +1,8 @@
 # Verified Coding Agent — 开发计划
 
-> 版本：V1 / 2026-09-15
+> 版本：V1 / 2026-09-16 / P03 Windows 适配修订
 > 依据：[开发规格](CODING_AGENT_DEVELOPMENT_SPEC.md)，重点参考 §16、§24、§29–31、§35–39、§42、§44–48。
-> 当前状态：P01–P03 已完成，本次授权止于 P03。P04–P12 尚未开始。
+> 当前状态：P01/P02 已完成；P03 安全修复与 Windows 适配已完成本机验证；macOS 集成复验待完成，状态为 IN_PROGRESS。本次范围仅 P03，P04–P12 尚未开始。
 
 ## 1. 目标与推进方式
 
@@ -20,14 +20,14 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 - 本文件是维护本项目的开发计划；产品内部的可执行 TaskGraph 在 P07 落地。
 - 首批端到端样本选择已有 pytest 测试的 Python 仓库，先证明闭环。其他语言的识别结果与实际验证支持范围分别报告。
 - P01 首个宿主验证环境为 Windows / PowerShell；P02/P03 在 macOS 验证。
-  P03 的进程后端目前仅实现 macOS；Windows/Linux 不回退为无隔离执行。
+  P03 增加 Windows 原生文件/日志与 LPAC 后端；Linux 进程后端未实现，不回退为无隔离执行。
 - 不安排未经验证的日历工期；通过阶段交付物和检查结果衡量进度。
 
 ## 2. 范围与实现默认值
 
 | 项目 | 开发约定 |
 | --- | --- |
-| 技术栈 | Python 3.12+、Pydantic v2、asyncio、Git CLI、subprocess；CLI 阶段引入 Typer；检查使用 pytest、ruff、mypy |
+| 技术栈 | Python 3.12+、Pydantic v2、asyncio、Git CLI、subprocess；Windows 只读 Git 使用 Dulwich；CLI 阶段引入 Typer；检查使用 pytest、ruff、mypy |
 | 源码布局 | 使用 `src/coding_agent/` 包；在包内保持规格要求的 core、agents、runtime、tools、verification、context、session 等职责边界 |
 | 建目录方式 | 当前阶段需要时再建立文件和目录，不预建规格 §33 的全部目录树 |
 | 执行方式 | V1 同时运行一个业务任务；不实现并行调度或远程 Worker |
@@ -51,18 +51,18 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 | D02 | P01 / 已解决 | §7、§9、§29 的 Risk 示例结构不同；AcceptanceSpec 缺少统一模型 | 已同步 §7、§9.1、§23–24、§29.1：统一 RiskProfile，总等级覆盖已评估维度；AcceptanceSpec 使用稳定 criterion/check ID；Evidence 显式记录来源、结果、时间和计划/上下文/工作区版本 |
 | D03 | P02 / 已解决 | FAST 的精简流程与总体 Review、§39 两次审批要求关系不清 | 已同步 §11–12、§25–28、§31、§37、§39：所有模式保留声明检查及计划/交付授权边界；FAST 仅低风险且未声明审查时省略 Reviewer，仍经过 REVIEWING 和门禁；中/高风险分别至少 STANDARD/STRICT；完整 RunSpec 指纹匹配的授权在任务/修复间复用，交付授权单独处理 |
 | D04 | P04 | §18、§37 Phase 4、§49 对 Worktree 所属版本有不同表述 | 按 §37 将顺序执行所需的 Worktree 能力纳入 P04，任务并行保持后续范围；开工时统一相关章节和工作区生命周期 |
-| D05 | P03 / 已解决 | `network: false`、受限 shell 和控制记录保护缺少具体执行边界 | 已同步规格 §20–21.1、§30–31：原生文件工具使用 POSIX 目录描述符与链接检查；进程使用本机实测的 macOS 只读、离线、禁止 fork 沙箱，写入通过 Patch；不支持的权限/平台明确拒绝。数据库权限按资源访问定义，测试数据库与需写入/子进程的验证后端仍是 P09 前置条件；不能用命令前缀或 Worktree 声称隔离 |
+| D05 | P03 / 已解决 | `network: false`、受限 shell 和控制记录保护缺少具体执行边界 | 已同步规格 §20–21.1、§30–31：原生文件工具使用 POSIX 目录描述符或 Windows 无跟随句柄；进程使用 macOS 只读沙箱或 Windows LPAC/Job 及受控执行副本，写入通过 Patch；不支持的权限/平台明确拒绝。数据库权限按资源访问定义，测试数据库与需写入/子进程的验证后端仍是 P09 前置条件；不能用命令前缀或 Worktree 声称隔离 |
 | D06 | P05 | 尚未选择真实 Provider 与可用凭据 | 选择一个可用 Provider，并定义结构化输出、工具调用、超时及用量返回；缺少凭据时继续离线实现，明确记录真实接入尚未验证 |
 
 ## 4. 阶段总览
 
-状态仅使用 `NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`DONE`。P01–P03 已完成；`DONE` 必须附交付物与检查证据，见 §8 的阶段验收记录。
+状态仅使用 `NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`DONE`。P01/P02 已完成；P03 安全复核后重新进入 IN_PROGRESS；`DONE` 必须附交付物与检查证据，见 §8 的阶段验收记录。
 
 | 阶段 | 依赖 | 主要交付 | 状态 |
 | --- | --- | --- | --- |
 | P01 领域基础 | 无 | 领域模型、DAG 校验、状态转换约束、基础工程配置 | DONE |
 | P02 工作流引擎 | P01 | 单任务调度、状态机、QualityGate、Fake 完整生命周期 | DONE |
-| P03 工具与执行记录 | P02 | PolicyEngine、Tool Runtime、持久事件、工件记录 | DONE |
+| P03 工具与执行记录 | P02 | PolicyEngine、Tool Runtime、持久事件、工件记录 | IN_PROGRESS |
 | P04 工作区 | P03 | Git 状态/差异/快照、Worktree、受控恢复与清理 | NOT_STARTED |
 | P05 模型适配 | P04 | Provider 接口与一个真实实现 | NOT_STARTED |
 | P06 Explorer / init | P05 | 项目梳理、用户规范、项目知识与增量刷新、初始化 CLI | NOT_STARTED |
@@ -103,6 +103,9 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 - [x] 实现单会话 JSONL writer；动作前落盘请求，动作后记录真实结果、关联 ID、退出码或错误及工件引用。
 - [x] 控制计划、事件、证据、状态等记录的写入归属，覆盖 shell 间接修改路径；日志中处理凭据和输出截断。
 - [x] 为请求有记录、结果缺失的情况保留“待核实”语义；记录失败时停止新副作用操作。
+- [x] 修复 Git diff 的 forbidden 索引内容泄露及已知多行凭据脱敏遗漏，补充跨平台和真实后端回归用例。
+- [x] 完成 Windows 原生文件/日志、LPAC 进程与隔离 Git helper 的真实验收及完整检查。
+- [ ] 在 macOS 重跑本次安全修复后的完整检查及真实沙箱/POSIX 日志集成测试，完成 P03 复验。
 
 **验收：** 在临时目录测试越界路径、链接越界、拒绝/待审批请求、超时和写日志失败；拒绝的动作没有执行副作用。不能强制的权限限制必须显式拒绝。真实 Coder 启用前完成事件持久化。
 
@@ -243,6 +246,8 @@ python -m mypy src/coding_agent
 | 2026-09-15 / P01 开始 | 核实目录仅有三份文档，无 Git 仓库及已有产品代码；范围为 D01/D02、领域模型、图与状态校验和基础检查配置 | 已找到本机 Python 3.12.14；测试工具尚未配置，产品检查未运行 | 建立项目虚拟环境并完成 P01 验收；不推进 P02 | 规格 §7–11、§24、§29.1、§46–47 |
 | 2026-09-15 / P02 开始 | 用户授权 P02；初始工作区干净，核对现有领域模型与 D03；实施模式策略、串行工作流、证据门禁、Fake 组件与事件 | 当前宿主 macOS，已有 Python 3.12.10；P02 检查尚未运行。uv 清单读取被沙箱阻止，经审批后读取成功 | 完成离线生命周期和故障验证；不推进 P03 或真实模型接入 | 规格 §11–12、§24–28、§31、§39；本文件 |
 | 2026-09-15 / P03 开始 | 用户授权 P03；基线为 aef0b15，初始工作区干净；核对 Tool Runtime、权限边界与共享事件序列 | macOS 可调用 sandbox-exec，最小拒绝默认权限的 echo 探针成功；完整隔离能力尚未验证 | 先解决 D05，再实现工具、持久事件及故障测试；不推进 P04 | 规格 §20–21、§30–31；本文件 |
+| 2026-09-16 / P03 安全修复 | 用户授权修复审查中的两项 P1；开工基线 f858a2f、工作区干净；复用路径策略过滤 Git 索引清单，扩展多行秘密脱敏，补充回归测试；不增加依赖 | Windows 项目虚拟环境；受影响检查及完整检查见下方本次记录 | 真实 macOS 沙箱/POSIX 工件集成复验待完成，P03 保持 IN_PROGRESS；不推进 P04 | ToolRuntime、Sanitizer、tests/test_tool_security.py、tests/test_tools.py |
+| 2026-09-16 / P03 Windows 适配 | 用户明确授权“适配”；保留安全修复 Diff，扩展原生文件/日志与真正隔离的 Windows 执行；风险 high、复杂度 large（Win32 ABI、ACL、进程生命周期和 Git 平台差异耦合） | 发现原生 Git 无法在 AppContainer 内完成路径规范化；增加 Windows-only Dulwich 依赖并同步 D05，不放宽全局 ACL 或隔离 | 真实 Windows 边界、超时/取消及完整检查；保留 macOS 复验待办，不推进 P04 | runtime Windows 后端、core/paths.py、tests/test_windows.py、规格 §20–21.1 |
 
 ### P01 验收记录（2026-09-15）
 
@@ -421,9 +426,129 @@ Linux 验证。Apple 标记 sandbox-exec 为 deprecated，其他 OS 版本须重
 未受限进程并发移动目录或修改文件。脱敏依赖已知秘密和常见模式，不能声称自动识别所有
 凭据。未验证真实 Provider 或竞品优势。
 
+### P03 安全复核与修复（2026-09-16）
+
+**审查发现：** 初版 Git diff 只排除 `.agent`；已入索引的 forbidden 文件被删除后，
+Git 仍能从索引输出原文。原脱敏器只匹配完整秘密，多行秘密经 diff 每行添加前缀后
+无法匹配。2026-09-15 的验收记录保留为历史证据，不代表本次修改已通过 macOS 复验。
+
+**实际修复：**
+
+- Git diff 先在现有沙箱内执行 `ls-files --cached -z`，复用 `path_permitted` 筛选完整
+  索引路径，再用字面路径生成差异；保留大小写、Unicode 等价及控制目录拒绝规则。
+  无可读索引路径时返回空差异；清单失败、截断或无法完整解码时停止，不退回全仓库 diff。
+- 禁用重命名推断、颜色和展开子模块内容；索引与 diff 共用超时预算，第二次调用前重查
+  日志可写性。清单失败保留实际退出码，不制造成功记录；未改变现有沙箱权限或平台限制。
+- 已知秘密按完整值和各非空行脱敏，覆盖 Patch/Git diff、上下文行、搜索及嵌套记录。
+  同值普通文本可能被保守遮盖；实际文件内容与前后 SHA256 保持真实。
+- 新增 [跨平台安全回归](tests/test_tool_security.py)，扩展
+  [真实工具与日志回归](tests/test_tools.py)；同步规格和 README，未增加依赖。
+
+**本次验证：** Windows / PowerShell，项目 `.venv`，Python 3.12.14。
+跨平台 Git 用例在临时仓库运行实际 Git 命令，以测试适配器替换 macOS 启动器；
+它们证明命令和策略行为，不构成 macOS 沙箱验证。
+
+| 检查 | 实际结果 |
+| --- | --- |
+| `python -m pytest` | 425 passed，61 skipped；新增 26 项跨平台回归通过，新增 5 项真实工具/日志用例因 Windows 平台跳过 |
+| `python -m ruff check .` | All checks passed |
+| `python -m ruff format --check .` | 32 files already formatted |
+| `python -m mypy src/coding_agent` | 13 errors in 3 files；与审查基线相同的 Windows/POSIX API 类型差异（O_NOFOLLOW、O_DIRECTORY、O_NONBLOCK、fchmod、killpg、SIGKILL），未压制或计为通过 |
+| `python -m mypy --platform darwin --cache-dir .mypy_cache_darwin src/coding_agent` | Success: no issues found in 22 source files；仅目标平台静态检查，不代表运行过 macOS 后端 |
+
+基线审查为 399 passed、56 skipped；本次新增 31 项回归，未删除测试或弱化原断言。
+默认执行器和文件补丁工具因沙箱初始化错误不可用，经批准使用工作区内的 PowerShell/
+虚拟环境 Python 完成编辑与检查；未改变产品进程权限。
+
+**未验证与下一步：** 真实 macOS 后端和 POSIX 文件/日志集成测试在 Windows 跳过。
+P03 保持 IN_PROGRESS；需在 macOS 对当前代码重跑完整检查，再确认 DONE。P04–P12
+未开始；本次未提交或 push。
+
+### P03 Windows 适配验收（2026-09-16）
+
+**授权与范围：** 用户明确要求 Windows 适配；保留此前两项安全修复，扩展 P03，
+不推进 P04。本次更新开发计划及 D05；产品内部的版本化计划仍待 P07 实现。
+复杂度重新评为 large、风险 high：文件持久化、Win32 ABI、ACL、进程生命周期与 Git
+平台语义相互影响；新增依赖用于已有 Git 工具的实际 Windows 使用者。
+
+**实际交付：**
+
+- [平台文件边界](src/coding_agent/runtime/_fileio.py) 与
+  [Windows 无跟随句柄](src/coding_agent/runtime/_winfiles.py)：本地固定 NTFS、
+  目录句柄固定、拒绝 reparse/junction/硬链接/ADS/设备名/尾点空格/8.3 别名；
+  Patch 保留目标 DACL，文件 fsync 与 WRITE_THROUGH 安装；文件工具和日志复用此边界。
+- [Windows 进程后端](src/coding_agent/runtime/windows_process.py) 与
+  [LPAC/Job 实现](src/coding_agent/runtime/_lowbox.py)：每次复制许可输入，原目录 ACL
+  不变；副本只读，限制一个进程/512 MiB，禁用 Win32k 调用，仅继承 stdio。
+  只有启动必需的 lpacAppExperience/registryRead 能力，没有网络能力；
+  超时、取消、Job 分配失败都会终止并确认回收进程，清理临时 profile 与副本。
+  准备时间包含在超时内，复制受 20,000 项/1 GiB 限制。
+- [隔离 Git helper](src/coding_agent/runtime/_windows_git.py)：Windows-only
+  Dulwich 1.2.14（传递依赖 urllib3）代替无法在本机 LPAC 中运行的原生 Git，
+  helper 仍处于同一隔离边界。复用库的索引/对象/状态读取与底层差异生成；
+  只读解析本地安全配置，按精确路径生成差异。普通状态、二进制差异、CRLF 和索引
+  可执行位已对照真实 Git；不支持的 attributes/include/filter、特殊索引标志、
+  冲突、子模块、符号链接、core.filemode=true、外部对象库/Worktree 明确失败。
+- [共享路径策略](src/coding_agent/core/paths.py) 同时供原生工具和 Git helper 使用；
+  工具 path/cwd 字段保留原始空格，修复原 NonEmptyStr 自动去空格会重定向操作的问题。
+  Windows 默认后端不依赖系统 Git；Shell 的独立工具链仍由控制器明确配置。
+
+**验证环境：** Windows 11 10.0.26200 / AMD64 / NTFS；项目 `.venv`，
+CPython 3.12.14。使用临时目录、仓库、独立 AppContainer profile；无需模型凭据。
+原 61 项跳过中的 42 项文件/日志集成现在在 Windows 实际运行；
+保留 17 项真实 macOS 沙箱和 2 项 POSIX 专属测试的跳过理由。
+
+| 检查 | 实际结果 |
+| --- | --- |
+| `python -m pytest -q -rs` | 506 passed，19 skipped；包括当时全部 38 项 Windows 专项 |
+| `python -m pytest tests/test_windows.py -k network_denied -q` | 2 passed，37 deselected；全套之后补加非回环出站用例，并重跑回环用例，两者均为 WinError 10013。当前 39 项 Windows 专项均已执行通过 |
+| `python -m ruff check .` | All checks passed |
+| `python -m ruff format --check .` | 39 files already formatted |
+| `python -m mypy src/coding_agent` | Success: no issues found in 28 source files（Windows 目标） |
+| `python -m mypy --platform darwin --cache-dir .mypy_cache_darwin src/coding_agent` | Success: no issues found in 28 source files；只代表静态检查 |
+| `python -m pip install -e .` / `python -m pip check` | 安装成功，Windows 条件依赖解析成功；No broken requirements found |
+| 差异与文档 | `git diff --check`、本地 Markdown 链接/代码块检查通过；未提交或 push |
+
+[Windows 回归](tests/test_windows.py) 覆盖实际隔离读、原仓库/副本/控制记录/外部文件
+访问拒绝、回环与非回环网络拒绝、子进程及额外句柄拒绝、环境清理、输出截断、
+准备/进程超时、取消后确认进程退出及 profile 删除、Job 分配失败不恢复子线程、
+路径别名与连接点、DACL/CRLF 保留、Git 范围/脱敏及不支持输入的拒绝。
+读取故障回归确保 Git helper 不把 PermissionError 当作删除或成功。
+
+**过程中的失败及处理：**
+
+- 原生 Git 在最终 Win32k 限制下出现 DLL 初始化失败；诊断时去掉该附加限制后，仍因
+  AppContainer 的路径规范化权限失败。与
+  [微软项目的问题记录](https://github.com/microsoft/mxc/issues/694) 相符。
+  未更改系统对象命名空间/设备 DACL，改用隔离的库 helper；临时诊断覆盖均已移除。
+- AppContainer 初始探针缺少 profile/必需加载能力而无法启动；最终仅增加上述两项
+  启动能力。早期 Child Process Policy 与加载器冲突，改由恢复线程前分配的
+  单进程 Job 强制限制子进程，并以真实派生尝试验证拒绝；Win32k 限制保留。
+- 3 秒超时探针耗在执行副本准备，未启动进程；分别测试准备超时不启动和 15 秒预算下
+  已启动进程被终止，保留 started 断言。尾空格路径测试暴露工具模型自动 trim，
+  从公共字段根因修复。Git 状态输出排序/换行、冲突夹具 stdin 的 Windows CRLF
+  转换均已修正；冲突夹具改为字节输入并核实实际存在三个索引阶段。
+- 库的高层 diff 会把读取失败当删除，且未按 Windows core.filemode=false 保留
+  索引执行位；改为显式读取、精确路径及库的底层 diff，保留真实 IO 失败。
+- Ruff 导入/格式和跨平台 mypy 导入分支问题均已修复。
+  安装探针 `--no-build-isolation` 因当前 venv 无 setuptools 失败；
+  使用项目声明的标准隔离构建后安装成功。辅助差异检查曾错误覆盖
+  core.autocrlf=false，导致 CRLF 被整文件误报；恢复仓库原有设置后检查通过。
+
+**仍未验证/下一步：** Windows 最低 API 门槛为 10 1809，但只在上述 Windows 11
+宿主实测；其他版本、非 NTFS、Linux 进程执行不宣称可用。
+Windows 私有 AppContainer 存储允许该次运行写临时数据，不是完整虚拟机或绝对零写入；
+正常清理已验证，机器崩溃后的孤儿 profile/副本核对属于 P12。
+许多构建/测试需要的缓存写入、子进程和测试数据库仍需 P09。
+当前代码的真实 macOS/POSIX 复验仍待完成，P03 保持 IN_PROGRESS；下一步先复验，
+再按授权推进 P04，不将工具操作记录当作 Verification Evidence。
+
+**后续安排（用户指令）：** 先提交当前安全修复与 Windows 适配，由用户后续验证。
+P03 保留 IN_PROGRESS 及 macOS 真实集成复验待办；提交不代表阶段验收通过。
+
 ## 9. 下一步执行单元
 
-P03 已完成，本次止于此。下一次获得实施授权后推进 **P04：工作区与代码快照**：
+Windows 适配已在本机完成验证；下一步在 macOS 对当前 P03 代码完成真实集成复验并更新阶段状态。P03 验收通过且获得实施授权后，再推进 **P04：工作区与代码快照**：
 
 1. 处理 D04，统一主仓库、会话工作区和 Worktree 的生命周期及版本归属。
 2. 实现 prepare/status/diff/snapshot/reset/cleanup，区分并保留用户原有修改。

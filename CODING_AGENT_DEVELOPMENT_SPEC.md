@@ -1416,8 +1416,10 @@ approval or success claim is not authoritative.
 
 Native read/search operate on UTF-8 regular files. Patch performs a whole-file
 replacement with an expected SHA256, or create-only when the expected hash is None.
-It checks the target again, preserves ordinary mode bits, flushes the new file and
-directory, and records actual before/after hashes and a unified diff. Parent
+It checks the target again, preserves ordinary POSIX mode bits or the Windows
+target DACL, flushes the new file, and records actual before/after hashes and a
+unified diff. POSIX installs fsync the directory; Windows uses a local NTFS
+MoveFileExW WRITE_THROUGH installation. Path fields preserve whitespace. Parent
 directories must already exist. It does not delete files or apply model-claimed
 diffs without reading actual content. These file hashes do not replace P04's full
 workspace snapshot.
@@ -1425,8 +1427,15 @@ workspace snapshot.
 Shell accepts an absolute executable path, an argument array and a repository-
 relative working directory. Git provides fixed read-only status/diff commands;
 hooks, external diff/textconv, fsmonitor and global configuration are disabled.
-External Git directories and worktree metadata are rejected until P04. No new
-dependency, test parser, MCP integration or delivery command is introduced in P03.
+Diff first inventories index paths inside the same sandbox, applies the native
+read scope policy, then passes only permitted literal paths to Git with renames
+and color disabled. This protects deleted forbidden files still stored in Git.
+An incomplete, truncated or undecodable inventory stops the diff; both process
+calls share one timeout budget and recheck journal availability before continuing.
+External Git directories and worktree metadata are rejected until P04. The initial
+macOS P03 implementation added no dependencies; the authorized Windows adaptation
+adds a Windows-only Dulwich 1.2.14 dependency for isolated read-only Git operations.
+No test parser, MCP integration or delivery command is introduced in P03.
 
 Defaults are a 30-second process timeout (maximum 300), 64 KiB result output
 (maximum 1 MiB), and 1 MiB per text file. Search is bounded to 10,000 entries;
@@ -1495,20 +1504,20 @@ Git worktree cannot enforce network, filesystem or process permissions.
 ## 21.1 D05 — P03 enforced subset
 
 P03 chooses a deliberately restricted local backend and reports unsupported
-capabilities explicitly. The initial plan targeted Windows first; P01 was verified
-there, while the current P03 host is macOS. P03 does not claim Windows or Linux
-execution support. Future verification requirements must be met by a tested
+capabilities explicitly. macOS has the original sandbox-exec backend; the Windows
+adaptation adds native file/journal IO and an LPAC process backend. Linux process
+execution remains unsupported. Future verification requirements must be met by a tested
 backend, without removing checks or weakening permissions to obtain success.
 
 | Operation/boundary | Concrete enforcement |
 | --- | --- |
-| Native file access | POSIX directory descriptors and O_NOFOLLOW; normalized relative paths; regular single-link files only; forbidden ancestors override grants, including conservative case-insensitive denials; patch additionally requires allowed scope |
+| Native file access | POSIX directory descriptors/O_NOFOLLOW or Windows no-follow handles on local fixed NTFS; normalized relative paths; regular single-link files only; forbidden ancestors override grants, including conservative case-insensitive denials; patch additionally requires allowed scope |
 | Controller/Git metadata | File tools reject `.agent`, `.agents`, `.codex`, `.git` path components regardless of case; records live outside the repository or under its `.agent/` directory |
-| Process file access | macOS sandbox-exec with default deny, read-only repository and explicit trusted runtime roots plus required system library paths; forbidden paths and controller directories remain denied; shell cannot read Git metadata |
-| Persistent process writes | Denied, including repository, external and controller paths; only `/dev/null` permits write-data; source edits go through Patch |
-| Network/process isolation | Network including Unix sockets, Mach IPC and process-fork are denied; environment is replaced with a small fixed map, extra file descriptors are closed; exec remains under the same sandbox |
-| Existing aliases | Native tools reject symlinks/hardlinks; process preflight rejects accessible hardlinked inputs, while kernel path checks resolve symlinks |
-| Unsupported requests | No backend/fallback, network-enabled shell, test database provisioning and process exclusions beyond literal paths or directory/** produce DENY before launch |
+| Process file access | macOS sandbox-exec with default deny; Windows LPAC with read-only, scope-filtered execution copies; read-only repository and explicit trusted runtime roots plus required system library paths; forbidden paths and controller directories remain denied; shell cannot read Git metadata |
+| Persistent process writes | Repository, external and controller writes denied; macOS permits only `/dev/null`; Windows has per-call private AppContainer storage, removed on normal/error/cancel/timeout cleanup; source edits go through Patch |
+| Network/process isolation | macOS denies network, Unix sockets, Mach IPC and fork. Windows LPAC has no network capability, opts out of ALL APPLICATION PACKAGES, disables Win32k syscalls, and uses a kill-on-close Job with one process, 512 MiB process memory and UI limits; only stdio handles are inherited. Both use a small explicit environment |
+| Existing aliases | Native tools reject symlinks/hardlinks. Windows also rejects reparse points, junctions, DOS devices, alternate streams, trailing dots/spaces and 8.3 aliases. Windows execution copies contain independent regular files; trusted installed runtime hardlinks may be copied, never repository hardlinks |
+| Unsupported requests | No backend/fallback, network-enabled shell, test database provisioning and, on macOS, process exclusions beyond literal paths or directory/** produce DENY before launch |
 | Authorization | A matching plan is required; scoped file tools and fixed Git reads reuse it; shell reuses only an exact declared command in root cwd, otherwise ASK; a concrete operation approval cannot bypass scope/backend DENY |
 
 The controller owns the workspace during execution; hostile concurrent changes by
@@ -1521,13 +1530,44 @@ and behavior must be rechecked on other OS versions, with no unsandboxed fallbac
 
 The original database permission had no resource semantics. P03 defines `deny`
 as no provided database service, credentials or database mutation capability;
-network/IPC and persistent process writes are blocked. Approved local file reads
+network access and writes to existing repository/host database resources are blocked.
+Windows private per-call storage can hold scratch data; it is not a provisioned
+test database service. Approved local file reads
 remain file reads: this is not a semantic ban on SQL computation or parsing local
 database files. Protect database data paths with forbidden scope. `test_only`
 requires actual test database provisioning/isolation and is rejected until that
 exists. The current backend also rejects writes needed by many builds/tests and
 does not allow child processes; this is a P09 capability prerequisite, not a reason
 to skip required checks and declare them passed.
+
+Windows execution preparation copies at most 20,000 entries / 1 GiB within the
+same timeout budget. It does not modify input ACLs or provide P04 snapshots.
+The controller configures standalone trusted toolchains; executable launchers that
+need child processes are unsupported. Absolute repository path arguments are
+mapped to the copy; absolute paths embedded in script text are not rewritten.
+LPAC receives only lpacAppExperience and registryRead capabilities needed for
+startup, not network capabilities. Its private profile and execution copies are
+removed before success is returned. Crash/orphan reconciliation remains P12.
+The minimum API version is Windows 10 1809; actual verification is limited to
+Windows 11 build 26200 / Python 3.12.14 / NTFS. Other versions require validation.
+
+Windows status/diff run the Dulwich library inside the same LPAC. Native Git for
+Windows relies on a normalized DOS-path lookup denied by AppContainer; no global
+device/namespace DACL changes or unrestricted Git fallback are made. The helper
+reuses the shared path policy, reports only in-scope status entries, and disables
+global config, hooks and external filters. Ordinary index entries, tracked and
+untracked status, unstaged diffs and core.autocrlf are supported. Attributes,
+config includes/filters, POSIX mode tracking (core.filemode=true), conflicts,
+symlinks, submodules, special index flags,
+external object stores and worktree metadata explicitly fail. Unsupported or
+failed reads are not verification evidence. Conditional dependency:
+`dulwich==1.2.14; sys_platform == 'win32'`.
+
+Windows references: Microsoft's [AppContainer implementation guide](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer),
+[AppContainer isolation](https://learn.microsoft.com/en-us/windows/win32/secauthz/appcontainer-isolation)
+and [normalized-path access issue](https://github.com/microsoft/mxc/issues/694);
+[Dulwich API](https://www.dulwich.io/api/dulwich.porcelain.html).
+These describe mechanisms; real tests and their limits are recorded in DEV_PLAN.md.
 
 Design references checked for this boundary: the host's Apple `sandbox-exec(1)`
 manual, Chromium's [macOS sandbox design](https://www.chromium.org/developers/design-documents/sandbox/osx-sandboxing-design/)
@@ -2079,7 +2119,11 @@ Retain partial diffs, completed steps, and failure evidence after interruption o
 P03 implements only a newly created session directory containing `events.jsonl`
 and uniquely named plan/diff/output artifacts. The complete layout above remains
 the staged V1 target. Artifacts are exclusive-created, flushed, sanitized and hashed;
-the registered RunSpec fingerprint identifies the original controller input, while
+known multiline secrets are redacted both as complete values and as nonempty
+lines, including lines separated by diff/search prefixes. This conservative
+redaction can also mask identical ordinary text; actual patched bytes and their
+before/after hashes remain unchanged. The registered RunSpec fingerprint identifies
+the original controller input, while
 its sanitized artifact is for inspection and cannot be assumed replayable. A
 different plan cannot silently replace it in this writer; P07 adds versioned plans.
 

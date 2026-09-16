@@ -1,11 +1,15 @@
 """One task's tools, bound to an approved plan and the shared session journal."""
 
 import asyncio
+import os
+import shutil
 import stat
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from time import monotonic
 
-from ..core.tool_policy import PolicyEngine, relative_parts
+from ..core.tool_policy import PolicyEngine, path_permitted, relative_parts
 from ..core.tools import (
     ArtifactRef,
     Decision,
@@ -28,7 +32,7 @@ from ..core.workflow import (
     WorkflowEvent,
 )
 from ..runtime.filesystem import FileBoundaryError, SafeFiles
-from ..runtime.process import MacReadOnlyProcess
+from ..runtime.process import ProcessBackend, ProcessOutcome, default_process_backend
 from ..session.records import JsonlJournal
 
 
@@ -42,8 +46,8 @@ class ToolRuntime:
         journal: JsonlJournal,
         approval: PlanApproval | None,
         read_revision: RevisionReader,
-        process_backend: MacReadOnlyProcess | None = None,
-        git_executable: Path = Path("/usr/bin/git"),
+        process_backend: ProcessBackend | None = None,
+        git_executable: Path | None = None,
         timeout: float = 30,
         max_output_bytes: int = 65_536,
         max_file_bytes: int = 1_048_576,
@@ -66,8 +70,15 @@ class ToolRuntime:
         self.journal = journal
         self.approval = PlanApproval.model_validate(approval) if approval is not None else None
         self.read_revision = read_revision
-        self.backend = process_backend or MacReadOnlyProcess()
-        self.git_executable = git_executable.resolve(strict=True)
+        # Windows dispatches Git reads to the isolated Dulwich helper. The host
+        # executable is a marker, never an unrestricted Git fallback.
+        git_path = git_executable or Path(
+            sys.executable if sys.platform == "win32" else shutil.which("git") or "/usr/bin/git"
+        )
+        self.git_executable = git_path.resolve(strict=True)
+        self.backend = process_backend or default_process_backend(
+            runtime_roots=() if sys.platform == "win32" else (self.git_executable.parent,)
+        )
         self.timeout = timeout
         self.max_output_bytes = max_output_bytes
         self.policy = PolicyEngine()
@@ -170,20 +181,19 @@ class ToolRuntime:
                             raise FileBoundaryError(
                                 "external Git directories/worktrees require P04"
                             )
-                        argv = self._git_argv(invocation)
+                        executed = True
+                        outcome = await self._run_git(invocation)
                     else:
-                        argv = invocation.argv
-                    executed = True
-                    outcome = await self.backend.run(
-                        argv,
-                        cwd=workdir,
-                        root=self.root,
-                        task=self.task,
-                        protected=self.journal.directory,
-                        timeout=self.timeout,
-                        max_output_bytes=self.max_output_bytes,
-                        git=isinstance(invocation, Git),
-                    )
+                        executed = True
+                        outcome = await self.backend.run(
+                            invocation.argv,
+                            cwd=workdir,
+                            root=self.root,
+                            task=self.task,
+                            protected=self.journal.directory,
+                            timeout=self.timeout,
+                            max_output_bytes=self.max_output_bytes,
+                        )
                     output, truncated, exit_code = (
                         outcome.output,
                         outcome.truncated,
@@ -209,6 +219,8 @@ class ToolRuntime:
                     "operation interrupted; inspect actual state",
                     True,
                 )
+            except TimeoutError:
+                status, reason = "timed_out", "process timeout"
             except (OSError, ValueError) as error:
                 status = "failed"
                 reason = f"{type(error).__name__}: operation failed; inspect actual state"
@@ -256,7 +268,7 @@ class ToolRuntime:
             raise asyncio.CancelledError
         return result
 
-    def _git_argv(self, invocation: Git) -> tuple[str, ...]:
+    async def _run_git(self, invocation: Git) -> ProcessOutcome:
         args = (
             str(self.git_executable),
             "--no-pager",
@@ -269,14 +281,65 @@ class ToolRuntime:
             "-c",
             "core.untrackedCache=false",
             "-c",
-            "core.hooksPath=/dev/null",
+            f"core.hooksPath={os.devnull}",
             "-c",
-            "core.attributesFile=/dev/null",
+            f"core.attributesFile={os.devnull}",
             "-c",
-            "core.excludesFile=/dev/null",
+            f"core.excludesFile={os.devnull}",
             "-c",
             f"safe.directory={self.root}",
         )
+        deadline = monotonic() + self.timeout
+
+        async def run(*command: str) -> ProcessOutcome:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Git operation deadline reached")
+            return await self.backend.run(
+                (*args, *command),
+                cwd=self.root,
+                root=self.root,
+                task=self.task,
+                protected=self.journal.directory,
+                timeout=remaining,
+                max_output_bytes=self.max_output_bytes,
+                git=True,
+            )
+
         if invocation.operation == "status":
-            return (*args, "status", "--porcelain=v1", "--untracked-files=normal")
-        return (*args, "diff", "--no-ext-diff", "--no-textconv", "--", ".", ":(exclude).agent")
+            return await run("status", "--porcelain=v1", "--untracked-files=normal")
+        # Worktree read denials cannot protect deleted files still in the index.
+        # Inspect names only, then use the same policy as native reads, including
+        # case/Unicode equivalence and control directories at any depth.
+        inventory = await run("ls-files", "--cached", "-z")
+        if inventory.exit_code != 0 or inventory.timed_out:
+            return ProcessOutcome(
+                inventory.exit_code,
+                "Git index inventory failed; diff not executed",
+                inventory.truncated,
+                inventory.timed_out,
+            )
+        if (
+            inventory.truncated
+            or (inventory.output and not inventory.output.endswith("\0"))
+            or "\ufffd" in inventory.output
+        ):
+            raise FileBoundaryError("Git index inventory incomplete; diff not executed")
+        paths = tuple(
+            f":(top,literal){path}"
+            for path in dict.fromkeys(inventory.output.split("\0")[:-1])
+            if path_permitted(path, self.task.scope)
+        )
+        if not paths:
+            return ProcessOutcome(0, "", False, False)
+        self.journal.check_writable()
+        return await run(
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+            "--no-color",
+            "--submodule=short",
+            "--",
+            *paths,
+        )

@@ -13,11 +13,14 @@ from uuid import uuid4
 from ..core.models import DomainModel
 from ..core.tools import ArtifactRef
 from ..core.workflow import EventWriteError, RunSpec, WorkflowEvent
+from ..runtime import _fileio as io
 
 
 class Sanitizer:
     def __init__(self, secrets: tuple[str, ...] = ()) -> None:
-        self._secrets = tuple(sorted((s for s in secrets if s), key=len, reverse=True))
+        # Diff/search prefixes and partial output can separate a multiline secret.
+        fragments = {part for secret in secrets for part in (secret, *secret.splitlines()) if part}
+        self._secrets = tuple(sorted(fragments, key=len, reverse=True))
 
     def text(self, value: str) -> str:
         for secret in self._secrets:
@@ -47,7 +50,7 @@ class JournalInspection(DomainModel):
 
 
 def inspect_journal(path: Path, *, max_bytes: int = 64 * 1024 * 1024) -> JournalInspection:
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    fd = io.open_read(path)
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
@@ -99,23 +102,21 @@ class JsonlJournal:
     def __init__(
         self, directory: Path, session_id: str, *, sanitizer: Sanitizer | None = None
     ) -> None:
-        if os.name != "posix" or not hasattr(os, "O_NOFOLLOW"):
-            raise EventWriteError("verified POSIX journal backend unavailable")
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.directory = directory.resolve(strict=True)
         self.session_id = session_id
         self.sanitizer = sanitizer or Sanitizer()
-        self._directory_fd = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        self._directory_fd = io.open_directory(self.directory)
         fd: int | None = None
         try:
             # Exclusive creation rejects simultaneous writers and implicit resume/truncation.
-            fd = os.open(
+            fd = io.open_at(
+                self._directory_fd,
                 "events.jsonl",
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | io.NOFOLLOW,
                 0o600,
-                dir_fd=self._directory_fd,
             )
-            os.fsync(self._directory_fd)
+            io.sync_directory(self._directory_fd)
         except BaseException:
             if fd is not None:
                 os.close(fd)
@@ -139,7 +140,7 @@ class JsonlJournal:
         if self._poisoned or self._closed:
             raise EventWriteError("journal unavailable; reconcile before further side effects")
         try:
-            current = os.stat("events.jsonl", dir_fd=self._directory_fd, follow_symlinks=False)
+            current = io.stat_at(self._directory_fd, "events.jsonl")
             opened = os.fstat(self._fd)
             if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
                 raise OSError("journal path changed")
@@ -191,17 +192,17 @@ class JsonlJournal:
         if not re.fullmatch(r"[a-z]+-[a-f0-9]{32}\.txt", name):
             raise ValueError("invalid artifact label")
         try:
-            fd = os.open(
+            fd = io.open_at(
+                self._directory_fd,
                 name,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | io.NOFOLLOW,
                 0o600,
-                dir_fd=self._directory_fd,
             )
             with os.fdopen(fd, "wb") as stream:
                 stream.write(data)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.fsync(self._directory_fd)
+            io.sync_directory(self._directory_fd)
         except OSError as error:
             self._poisoned = True
             raise EventWriteError(

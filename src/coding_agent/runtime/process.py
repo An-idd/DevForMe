@@ -8,6 +8,7 @@ import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from ..core.models import TaskSpec
 from ..core.tool_policy import CONTROL_NAMES, glob_matches
@@ -19,6 +20,31 @@ class ProcessOutcome:
     output: str
     truncated: bool
     timed_out: bool
+
+
+class ProcessBackend(Protocol):
+    def denial(self, task: TaskSpec, *, git: bool = False) -> str | None: ...
+
+    async def run(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: Path,
+        root: Path,
+        task: TaskSpec,
+        protected: Path,
+        timeout: float,
+        max_output_bytes: int,
+        git: bool = False,
+    ) -> ProcessOutcome: ...
+
+
+def default_process_backend(*, runtime_roots: tuple[Path, ...] = ()) -> ProcessBackend:
+    if sys.platform == "win32":
+        from .windows_process import WindowsReadOnlyProcess
+
+        return WindowsReadOnlyProcess(runtime_roots=runtime_roots)
+    return MacReadOnlyProcess(runtime_roots=runtime_roots)
 
 
 class MacReadOnlyProcess:
@@ -187,6 +213,8 @@ class MacReadOnlyProcess:
 
     @staticmethod
     def _kill(pid: int) -> None:
+        if sys.platform == "win32":
+            raise ValueError("POSIX process groups unavailable")
         try:
             os.killpg(pid, signal.SIGKILL)
         except ProcessLookupError:

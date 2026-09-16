@@ -1,4 +1,4 @@
-"""POSIX descriptor-relative text operations, rejecting links and special files."""
+"""Scoped text operations using platform no-follow handles."""
 
 import hashlib
 import os
@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from ..core.models import ScopePolicy
 from ..core.tool_policy import path_permitted, relative_parts
+from . import _fileio as io
 
 
 class FileBoundaryError(ValueError):
@@ -19,8 +20,6 @@ class FileBoundaryError(ValueError):
 
 class SafeFiles:
     def __init__(self, root: Path, scope: ScopePolicy, *, max_bytes: int = 1_048_576) -> None:
-        if os.name != "posix" or not hasattr(os, "O_NOFOLLOW"):
-            raise FileBoundaryError("descriptor-relative no-follow backend is unavailable")
         self.root = root.resolve(strict=True)
         if not self.root.is_dir():
             raise FileBoundaryError("repository root must be a directory")
@@ -33,13 +32,13 @@ class SafeFiles:
         if not path_permitted(path, self.scope):
             raise FileBoundaryError("directory denied by policy")
         parts = relative_parts(path, root_allowed=True)
-        fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        fd = io.open_directory(self.root)
         try:
             info = os.fstat(fd)
             if (info.st_dev, info.st_ino) != self._identity:
                 raise FileBoundaryError("repository root changed")
             for part in parts:
-                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                child = io.directory_at(fd, part)
                 os.close(fd)
                 fd = child
             yield fd
@@ -55,7 +54,7 @@ class SafeFiles:
             yield fd, parts[-1]
 
     def _read_at(self, parent: int, name: str) -> bytes:
-        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        fd = io.open_at(parent, name, os.O_RDONLY | io.NOFOLLOW | io.NONBLOCK)
         try:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
@@ -84,7 +83,7 @@ class SafeFiles:
             nonlocal visited, output_size, truncated
             with self.directory(directory) as fd:
                 # Bound the inventory before sorting it; do not materialize unbounded directories.
-                with os.scandir(fd) as entries:
+                with io.entries(fd) as entries:
                     names = []
                     for entry in entries:
                         visited += 1
@@ -96,8 +95,10 @@ class SafeFiles:
                     child = name if directory == "." else f"{directory}/{name}"
                     if not path_permitted(child, self.scope):
                         continue
-                    info = os.stat(name, dir_fd=fd, follow_symlinks=False)
-                    if stat.S_ISDIR(info.st_mode):
+                    info = io.stat_at(fd, name)
+                    if getattr(info, "st_file_attributes", 0) & 0x400:
+                        truncated = True
+                    elif stat.S_ISDIR(info.st_mode):
                         walk(child)
                     elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
                         try:
@@ -130,7 +131,7 @@ class SafeFiles:
         with self._parent(path, write=True) as (parent, name):
             try:
                 old = self._read_at(parent, name)
-                mode = stat.S_IMODE(os.stat(name, dir_fd=parent, follow_symlinks=False).st_mode)
+                mode = stat.S_IMODE(io.stat_at(parent, name).st_mode)
             except FileNotFoundError:
                 old = None
                 mode = 0o644
@@ -139,15 +140,15 @@ class SafeFiles:
                 raise FileBoundaryError("content changed or creation target already exists")
             old_text = old.decode("utf-8") if old is not None else ""
             temporary = f".agent-patch-{uuid4().hex}"
-            temp_fd = os.open(
+            temp_fd = io.open_at(
+                parent,
                 temporary,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | io.NOFOLLOW,
                 mode & 0o777,
-                dir_fd=parent,
             )
             try:
                 with os.fdopen(temp_fd, "wb") as stream:
-                    os.fchmod(stream.fileno(), mode & 0o777)
+                    io.preserve_mode(stream.fileno(), mode & 0o777)
                     stream.write(data)
                     stream.flush()
                     os.fsync(stream.fileno())
@@ -158,18 +159,11 @@ class SafeFiles:
                     current = None
                 if current != old:
                     raise FileBoundaryError("target changed while preparing patch")
-                if old is None:
-                    # link+unlink installs create-only without clobbering a racing new file.
-                    os.link(
-                        temporary, name, src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False
-                    )
-                    os.unlink(temporary, dir_fd=parent)
-                else:
-                    os.replace(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
-                os.fsync(parent)
+                io.install(parent, temporary, name, replace=old is not None)
+                io.sync_directory(parent)
             finally:
                 try:
-                    os.unlink(temporary, dir_fd=parent)
+                    io.unlink(parent, temporary)
                 except FileNotFoundError:
                     pass
             after = hashlib.sha256(data).hexdigest()
