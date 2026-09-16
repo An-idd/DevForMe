@@ -10,7 +10,7 @@ from ..planning import PlanningOperation, PlanningRevision
 from ..provider import ModelCallRequest, ModelCallResult
 from ..state import TaskState, validate_transition
 from ..tools import ArtifactRef, ToolRequest, ToolResult
-from .contracts import Revision
+from .contracts import CoderResult, Revision
 
 
 class WorkflowEvent(DomainModel):
@@ -36,11 +36,15 @@ class WorkflowEvent(DomainModel):
         "session_finished",
         "session_interrupted",
         "plan_registered",
+        "execution_authorized",
+        "context_built",
+        "implementation_recorded",
         "tool_requested",
         "tool_finished",
         "model_requested",
         "model_finished",
     ]
+    coder_result: CoderResult | None = None
     reason: NonEmptyStr
     previous_state: TaskState | None = None
     state: TaskState | None = None
@@ -73,6 +77,10 @@ class WorkflowEvent(DomainModel):
                 self.tool_request.invocation, expected_operation
             ):
                 raise ValueError("initialization records only controller operations")
+        if self.coder_result is not None and self.kind != "coder_finished":
+            raise ValueError("Coder drafts belong only to coder_finished")
+        if self.kind in {"context_built", "implementation_recorded"} and self.task_id is None:
+            raise ValueError("context and implementation records require task identity")
         if self.kind == "task_state_changed":
             if self.task_id is None or self.previous_state is None or self.state is None:
                 raise ValueError("state events require task identity and both transition endpoints")
@@ -85,7 +93,10 @@ class WorkflowEvent(DomainModel):
         ):
             if self.task_id is None:
                 raise ValueError("worker and gate events require task identity")
-        if self.kind in {"plan_accepted", "review_finished"} and self.source is None:
+        if (
+            self.kind in {"plan_accepted", "review_finished", "execution_authorized"}
+            and self.source is None
+        ):
             raise ValueError("authorization and review results require source references")
         if (self.tool_request is not None) != (self.kind == "tool_requested"):
             raise ValueError("request payload belongs only to tool_requested")

@@ -79,6 +79,7 @@ class WorkflowEngine:
         state: TaskState | None = None,
         evidence_ids: tuple[str, ...] = (),
         source: str | None = None,
+        coder_result: CoderResult | None = None,
     ) -> None:
         sequence = self._writer.next_sequence
         event = WorkflowEvent.model_validate(
@@ -95,6 +96,7 @@ class WorkflowEngine:
                 "state": state,
                 "evidence_ids": evidence_ids,
                 "source": source,
+                "coder_result": coder_result,
             }
         )
         try:
@@ -297,7 +299,7 @@ class WorkflowEngine:
                 )
             )
             self._refresh_revision()
-            self._emit("coder_finished", implemented.summary, task)
+            self._emit("coder_finished", implemented.summary, task, coder_result=implemented)
             if not self._same_plan():
                 self._move(task, TaskState.REPLAN_REQUIRED, "plan or project knowledge changed")
                 return "plan or project knowledge changed"

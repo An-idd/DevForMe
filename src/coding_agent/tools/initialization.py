@@ -108,7 +108,8 @@ class InitializationRuntime:
                 )
             except FileExistsError:
                 raise ValueError(
-                    "initialization lock exists; inspect .agent/init-* records and the owning "
+                    "controller lock exists; inspect .agent/init.lock, its session records "
+                    "and the owning "
                     "process before removing a stale init.lock"
                 ) from None
             os.write(self._lock_fd, self.session_id.encode())

@@ -5,6 +5,7 @@ import os
 import shutil
 import stat
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
@@ -51,6 +52,7 @@ class ToolRuntime:
         journal: JsonlJournal,
         approval: PlanApproval | None,
         read_revision: RevisionReader | None = None,
+        guard: Callable[[], None] | None = None,
         workspace: Workspace | None = None,
         process_backend: ProcessBackend | None = None,
         git_executable: Path | None = None,
@@ -93,6 +95,14 @@ class ToolRuntime:
             self.read_revision = read_revision
         else:
             raise ValueError("a live revision reader is required")
+        if guard is not None:
+            reader = self.read_revision
+
+            def guarded_revision() -> Revision:
+                guard()
+                return reader()
+
+            self.read_revision = guarded_revision
         # Windows dispatches Git reads to the isolated Dulwich helper. The host
         # executable is a marker, never an unrestricted Git fallback.
         git_path = git_executable or Path(
@@ -203,6 +213,10 @@ class ToolRuntime:
         ):
             decision = PolicyDecision(decision=Decision.DENY, reason="prepare the workspace first")
         sequence = self.journal.next_sequence
+        if not workspace_controller and self.journal.agent_tool_calls >= self.spec.max_tool_calls:
+            decision = PolicyDecision(
+                decision=Decision.DENY, reason="session tool budget exhausted"
+            )
         request_event_id = f"{self.spec.session_id}:{sequence}"
         started = datetime.now(UTC)
         self.journal.write(

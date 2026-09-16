@@ -7,3 +7,7 @@ __pycache__/
 .mypy_cache/
 build/
 dist/
+
+.env
+.env.*
+!.env.example

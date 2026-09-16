@@ -36,7 +36,7 @@ def project(tmp_path, acceptance):
     root = tmp_path / "sample project"
     root.mkdir()
     (root / "AGENTS.md").write_text("Preserve public behavior.\n")
-    (root / "service.py").write_text("def run(): return 1\n")
+    (root / "service.py").write_bytes(b"def run(): return 1\n")
     (root / "opaque.txt").write_text("not sampled by Explorer\n")
     initialized = asyncio.run(initialize(root))
     knowledge = KnowledgeSnapshot.model_validate_json(

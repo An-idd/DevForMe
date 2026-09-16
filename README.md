@@ -6,8 +6,8 @@
 P05 模型适配、P06 项目初始化及 P07 计划 CLI。包含 QualityGate、有限修复、受控工具、持久事件、
 源码快照、Worktree、OpenAI Responses 适配和有来源的项目知识。
 P05–P07 模型行为通过离线模拟测试，另有实验性 CodexCoder 接入本地 Codex 编码循环；
-真实账号/API 冒烟待完成。run CLI、Coder 的完整计划上下文集成、真实验证 Evidence 与最终交付
-尚未实现；跨平台复验及阶段状态见开发计划。
+P08 已接入任务上下文、run CLI、独立工作区和 diff/history。
+真实账号/API 冒烟、P09 验证 Evidence、P10 审查及最终交付仍待完成；跨平台复验及阶段状态见开发计划。
 
 ## 开发环境
 
@@ -39,6 +39,43 @@ python3 -m venv .venv
 ```
 
 实际验证平台及版本见开发计划；命令示例不代表所有平台均已验证。
+
+## 使用 .env 配置模型
+
+本地配置为仓库根目录的 .env（Git 已忽略）；.env.example 是可提交模板。
+填入 CODING_AGENT_API_KEY 后，在已安装项目虚拟环境的终端运行：
+
+~~~dotenv
+CODING_AGENT_PROVIDER=zhipu
+CODING_AGENT_API_URL=https://open.bigmodel.cn/api/coding/paas/v4/chat/completions
+CODING_AGENT_MODEL=glm-5.3
+CODING_AGENT_API_KEY=
+~~~
+
+~~~bash
+agent init PATH --refresh --env-file .env
+agent plan "实现需求" --path PATH --env-file .env
+~~~
+
+--env-file 显式启用模型，路径相对于终端当前目录，不向父目录搜索。
+无该选项时保留原离线行为；原 --model MODEL + OPENAI_API_KEY 用法仍使用 OpenAI。
+优先级：--model > 同名环境变量 > 文件。空环境变量也覆盖文件并导致缺配置错误。
+前缀统一为 CODING_AGENT_，旧前缀不再读取；四个键均需提供，可由同名环境变量补齐。
+CODING_AGENT_CODEX_* 属于独立配置，dotenv 模型读取器忽略这些键，不自动导入。
+支持 UTF-8/BOM、LF/CRLF、空行、整行 # 注释、整值单/双引号；
+不执行变量替换、转义、命令或 export，不支持行尾注释。重复键、未知 CODING_AGENT_ 键和缺失项报错。
+文件值不写入进程环境，密钥注入现有脱敏器；.env 不进入项目探索和执行快照。
+
+智谱适配仅用于 Explorer/Planner 的只读结构化调用：JSON object 模式配合本地严格 Schema 校验。
+超时、截断、无效输出或工具请求均失败；不自动重试、不跟随重定向、不保存原始推理。
+复用现有 OpenAI SDK，无新增依赖。agent run 继续使用独立的本地 Codex 配置
+CODING_AGENT_CODEX_HOME / CODING_AGENT_CODEX_MODEL。
+如需通过文件使用 OpenAI，设置 CODING_AGENT_PROVIDER=openai、
+CODING_AGENT_API_URL=https://api.openai.com/v1/responses 以及相应 MODEL/API_KEY。
+
+已核对[智谱 Coding 端点](https://docs.bigmodel.cn/cn/guide/develop/gork)及
+[对话补全参数](https://docs.bigmodel.cn/api-reference/模型-api/对话补全)。
+glm-5.3 按用户指定保留；尚未验证账号上的模型可用性或执行真实智谱请求。
 
 ## P06 项目初始化
 
@@ -89,7 +126,7 @@ python3 -m venv .venv
 未读文件的内容变化不构成已读来源的变化，任务涉及它时必须通过 focus 补充探索。
 
 应用入口为 `await coding_agent.application.initialize(Path(...), ...)`；
-返回状态、知识修订、变化来源、问题与日志位置；P07 首次 plan 已复用，run 集成仍待 P08。
+返回状态、知识修订、变化来源、问题与日志位置；P07 首次 plan 和 P08 缺少计划时的 run 已复用。
 初始化修订没有计划版本，不能作为任务 VERIFIED 或 P04 全工作区快照使用。
 
 ## P07 计划、导入与查看
@@ -145,6 +182,70 @@ proposed 退出 0，blocked/stale/输入错误退出 2；真实模型/平台验�
 RunSpec 绑定整个 PlanVersion 的摘要指纹，并将禁止读取范围传给任务；
 WorkflowEngine 仍要求匹配的 PlanApproval。批次结果保留 pending_milestones，
 不能据此宣称整个需求、最终集成检查或交付已完成。
+
+
+## P08 执行与记录查看
+
+先通过 agent plan 保存并审阅计划，再使用已登录的专用 Codex 目录。
+原生 CLI 版本、独立登录配置和权限边界见下方「本地 coding 引擎 adapter」。
+
+~~~powershell
+# 工作区目录必须尚不存在，其父目录须存在，并位于项目之外。
+.\.venv\Scripts\agent.exe run --path 'D:\Projects\Example' --workspace 'D:\AgentWork\example-run' --codex-home 'D:\AgentProfiles\coding-agent' --model MODEL
+
+# 核对提案和上述预览，再传入预览给出的精确指纹；其他参数保持一致。
+.\.venv\Scripts\agent.exe run --path 'D:\Projects\Example' --workspace 'D:\AgentWork\example-run' --codex-home 'D:\AgentProfiles\coding-agent' --model MODEL --approve FINGERPRINT
+
+.\.venv\Scripts\agent.exe status --path 'D:\Projects\Example'
+.\.venv\Scripts\agent.exe diff --path 'D:\Projects\Example'
+.\.venv\Scripts\agent.exe history --path 'D:\Projects\Example'
+~~~
+
+可用 --codex 指定原生可执行文件；专用目录/模型也可通过
+CODING_AGENT_CODEX_HOME、CODING_AGENT_CODEX_MODEL 提供。全部命令支持 --json。
+无审批时只做预览，输出完整 RunSpec 和匹配指纹（文本模式显示指纹与预算）；
+不启动 Codex 或创建 Worktree。首次 run 缺少知识/计划时复用初始化，再提示先保存计划。
+执行指纹绑定完整计划、权限、预算、起始快照、执行器配置及工作区位置；改变这些输入需重新核对。
+
+- [任务上下文](src/coding_agent/context/coder.py) 包含需求、当前任务、计划/知识/代码修订、
+  复杂度、全局验收、里程碑、规则 ID、来源与未知问题。原知识摘录与运行时重新读取的源码分开保留；
+  不同任务使用新的上下文。每段当前源码最多 32 KiB，整个上下文最多 512 KiB；
+  必需上下文超限会阻塞，不静默删除规则。
+- 所有项目动作经过 Tool Runtime，进程仍受 P03 后端限制。整次执行默认最多 30 个
+  Agent/上下文工具请求及 31 个模型分段；达到工具额度后的拒绝请求仍留痕。
+  预算由同一日志派生，不随 Coder 实例/尝试重置；任务尝试次数与工作流总尝试限制同时生效。
+  Codex 每次尝试默认另限 20 个工具调用、60 秒。分段数不代表 HTTP 请求数或硬 token 上限。
+- 原项目代码保持原样；修改保存在指定目录下的 Worktree，返回实际路径。
+  运行时记录修改前后快照、实际改动路径、工具/命令及结果，模型总结独立标为 draft。
+  新调用方、共享状态、依赖、范围或验证困难需要结构化 replan 请求，停止当前调度。
+- P09/P10 尚未配置，正常实现后会因缺少必需证据返回 blocked，后续任务不继续执行。
+  重构或显式声明基线检查的计划，在基线不可用时于任何修改前阻塞。模型所说的“测试通过”不能将状态变为 VERIFIED。
+- 会话记录位于 .agent/run-<plan-id>/，与 init/plan 共用独占锁。同一计划各版本共用一次执行身份；
+  已有目录拒绝重跑，不重置预算。不自动恢复、删除修改、回写源项目或提交 Git；
+  新建独立提案不代表恢复旧会话，恢复/跨批次协调仍属 P11/P12。
+- 每次调用前检查源项目、用户规则和计划；Worktree 内的规范变化也停止后续动作。
+  取消保留修改和中断记录；请求有记录而结果缺失时保留锁，先检查真实状态。
+- status 默认优先显示当前计划已有执行的记录状态；无执行时仍显示 P07 提案。
+  status/diff/history 可用 --session run-<plan-id> 指定旧会话，均只读。
+  diff 为最近一次记录的整体 Diff，截断会标明；不包含随后人工编辑的变化。
+  不完整日志和缺失 Diff 明确显示，不能由模型总结补成成功。
+
+run 的 approval_required、blocked、stale、replan_required、failed 退出码为 2，
+中断为 130；读取完整历史成功为 0，不代表任务成功。所有结果的 requirement_complete 仍为 false。
+完整 API 为 application.execution.run；直接调用 CodexCoder 的旧 API 仍可用于底层协议测试，
+应用执行路径始终构建并校验 TaskContextPack。
+
+新增 P08 完整应用账号冒烟（默认跳过；只发送临时合成文件，单次 Codex 尝试最多 3 个工具调用、
+60 秒，另有两个上下文读取）：
+
+~~~powershell
+$env:CODING_AGENT_RUN_LIVE = "1"
+.\.venv\Scripts\python.exe -m pytest tests/test_execution_live.py -q -s -rs
+Remove-Item Env:CODING_AGENT_RUN_LIVE
+~~~
+
+需要前述专用登录及模型配置。断言真实修改、源文件保留、上下文/日志和“缺少证据仍阻塞”；
+不将真实编码冒烟等同于 P09 验证通过。
 
 ## 领域边界
 
@@ -337,12 +438,12 @@ restored = await runtime.workspace_operation(
   记录配置、上下文指纹、实际返回模型/响应 ID、用量和脱敏后的可见输出；不保存完整输入或推理续接数据。
   结果写入失败会阻止后续模型及工具调用；待核实请求由 `inspect_journal` 返回。
 - 输出 schema 使用拒绝未知字段的 Pydantic 对象模型；返回后再次做严格解析。
-  RequirementContract、ReviewResult 已有离线覆盖；PlanDraft 在 P07 定义后接入同一接口。
+  RequirementContract、ReviewResult 和 P07 PlanDraft 已有离线覆盖。
   未声明的工具、参数错误、重复 call ID、孤立或遗漏的工具结果、拒答和不完整响应均不能当作成功结果。
 - `runtime_tools()` 仅暴露 read/search/patch/shell/git 的请求结构。
   控制器用 `tool_request(call, local_request_id)` 转换后交给 ToolRuntime；
   `tool_output(call, request, result)` 将实际结果关联到供应商 call ID。
-  模型不持有工具执行器、审批权或工作区生命周期接口，现阶段也没有自动 Agent 循环。
+  模型不持有工具执行器、审批权或工作区生命周期接口，API 路径没有自研编码循环；本地编码由下述 Codex adapter 承担。
 - API 使用 `store=False`，不截断输入，关闭 SDK 自动重试及并行工具调用。
   推理模型的加密续接数据由适配器封装、检查并在下一轮回传，业务代码不解析供应商输出项。
   最多 1,000 条消息、32 个工具定义，上下文消息/响应各限 2 MiB；
@@ -352,7 +453,7 @@ restored = await runtime.workspace_operation(
   输出、缓存及推理 token 数。没有 usage 时保持未知，不编造零消耗或估算费用。
   本地取消会向上传播 CancelledError 并记录 interrupted，不能据此断言服务端没有执行或计费。
 - 模型 API 是受信控制器按配置发出的独立网络请求；任务的 `network: false` 仍约束工具沙箱。
-  模型不能通过工具任意联网或读取控制器凭据。P06/P08 后续负责选择任务上下文和循环预算。
+  模型不能通过工具任意联网或读取控制器凭据。P06/P08 已接入项目知识、任务上下文和本次执行的调用预算。
 
 ### 真实 API 冒烟
 

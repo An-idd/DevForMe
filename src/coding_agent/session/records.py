@@ -135,12 +135,22 @@ class JsonlJournal:
             raise
         self._fd = fd
         self._sequence = 0
+        self._model_calls = 0
+        self._agent_tool_calls = 0
         self._poisoned = False
         self._closed = False
         self._active = False
         self._registered_plan: str | None = None
         self._request_ids: set[str] = set()
         self._pending: dict[str, WorkflowEvent] = {}
+
+    @property
+    def model_calls(self) -> int:
+        return self._model_calls
+
+    @property
+    def agent_tool_calls(self) -> int:
+        return self._agent_tool_calls
 
     @property
     def next_sequence(self) -> int:
@@ -188,6 +198,11 @@ class JsonlJournal:
                 "durable event append failed; operation outcome may be unresolved"
             ) from error
         self._sequence = event.sequence
+        self._model_calls += event.model_request is not None
+        self._agent_tool_calls += (
+            event.tool_request is not None
+            and event.tool_request.invocation.kind in {"read", "search", "patch", "shell", "git"}
+        )
         if event.tool_request is not None or event.model_request is not None:
             self._pending[event.event_id] = event
         if result is not None:

@@ -4,7 +4,7 @@ from enum import StrEnum
 from hashlib import sha256
 from typing import Annotated, Literal, Protocol
 
-from pydantic import AwareDatetime, Field
+from pydantic import AwareDatetime, Field, model_validator
 
 from ..graph import TaskGraph
 from ..models import (
@@ -37,6 +37,9 @@ class RunSpec(DomainModel):
     revision: Revision
     mode: WorkflowMode = WorkflowMode.STANDARD
     plan_revision: NonEmptyStr | None = None
+    executor_revision: NonEmptyStr | None = None
+    max_tool_calls: PositiveInt = 30
+    max_model_calls: PositiveInt = 31
     pending_milestones: tuple[Identifier, ...] = ()
     max_review_fixes: Annotated[int, Field(strict=True, ge=0)] = 2
     max_total_attempts: PositiveInt = 30
@@ -60,9 +63,23 @@ class PlanApproval(DomainModel):
         return self.session_id == spec.session_id and self.plan_fingerprint == spec.fingerprint
 
 
+class ReplanRequest(DomainModel):
+    trigger: Literal["scope", "coupling", "uncertainty", "verification", "dependency"]
+    reason: NonEmptyStr
+    proposed_complexity: Literal["small", "medium", "large"]
+    needed_changes: NonEmptyStr
+
+
 class CoderResult(DomainModel):
     outcome: Literal["implemented", "blocked", "replan_required", "failed", "cancelled"]
     summary: NonEmptyStr
+    replan: ReplanRequest | None = None
+
+    @model_validator(mode="after")
+    def valid_replan(self) -> "CoderResult":
+        if self.replan is not None and self.outcome != "replan_required":
+            raise ValueError("replanning details require replan_required")
+        return self
 
 
 class VerificationResult(DomainModel):

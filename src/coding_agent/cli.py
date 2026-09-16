@@ -3,17 +3,24 @@
 import argparse
 import asyncio
 import os
+import shutil
 from collections.abc import Sequence
 from pathlib import Path
 
+from .application.execution import RunResult
+from .application.execution import run as execute_plan
 from .application.initialization import InitializationResult, initialize
 from .application.planning import PlanInspection, PlanningResult, inspect_plan, plan, render_graph
 from .core.models import ScopePolicy
 from .core.planning import PlanSettings
-from .core.provider import GenerationSettings, ProviderError
+from .core.provider import GenerationSettings, ModelFailure, ProviderError
 from .core.workflow import EventWriteError
+from .executors.codex import CodexSettings
+from .providers.config import AssistantConfig, load_assistant_config
 from .providers.openai import OpenAIProvider
+from .providers.zhipu import ZhipuProvider
 from .session.records import Sanitizer
+from .tools.execution import RunHistory, inspect_execution
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -69,9 +76,80 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         inspect.add_argument("--path", type=Path, default=Path("."))
         inspect.add_argument("--json", action="store_true")
+        if name == "status":
+            inspect.add_argument("--session", help="Inspect a recorded execution")
+    execution = commands.add_parser("run", help="Execute an approved plan in a retained workspace")
+    execution.add_argument("--path", type=Path, default=Path("."))
+    execution.add_argument(
+        "--workspace", type=Path, required=True, help="New directory outside the project"
+    )
+    execution.add_argument("--codex", type=Path, help="Native Codex executable")
+    execution.add_argument(
+        "--codex-home", type=Path, default=os.environ.get("CODING_AGENT_CODEX_HOME")
+    )
+    execution.add_argument("--model", default=os.environ.get("CODING_AGENT_CODEX_MODEL"))
+    execution.add_argument("--approve", help="Exact fingerprint printed by run preview")
+    execution.add_argument("--json", action="store_true")
+    for name in ("diff", "history"):
+        history = commands.add_parser(
+            name, help="Inspect persisted execution records without running tools"
+        )
+        history.add_argument("--path", type=Path, default=Path("."))
+        history.add_argument("--session", help="run-<plan-id>; defaults to current plan")
+        history.add_argument("--json", action="store_true")
+    for assisted in (init, planning):
+        assisted.add_argument(
+            "--env-file", type=Path, help="Opt in using CODING_AGENT_* from this UTF-8 dotenv file"
+        )
     args = parser.parse_args(argv)
+    config: AssistantConfig | None = None
+    secrets = tuple(
+        filter(None, (os.environ.get("OPENAI_API_KEY"), os.environ.get("CODING_AGENT_API_KEY")))
+    )
 
-    async def run() -> InitializationResult | PlanningResult | PlanInspection:
+    def model_provider(token_limit: int) -> OpenAIProvider | ZhipuProvider:
+        settings = GenerationSettings(
+            model=config.model if config else args.model,
+            max_output_tokens=token_limit,
+            timeout_seconds=60,
+        )
+        if config is None:
+            return OpenAIProvider(settings)
+        if config.provider == "zhipu":
+            return ZhipuProvider(settings, api_key=config.api_key, api_url=config.api_url)
+        if config.api_url != "https://api.openai.com/v1/responses":
+            raise ProviderError(ModelFailure(code="configuration"))
+        return OpenAIProvider(settings, api_key=config.api_key)
+
+    async def run() -> (
+        InitializationResult | PlanningResult | PlanInspection | RunResult | RunHistory
+    ):
+        if args.command in {"diff", "history"}:
+            return inspect_execution(args.path, args.session)
+        if args.command == "status":
+            try:
+                return inspect_execution(args.path, args.session)
+            except FileNotFoundError:
+                if args.session is not None:
+                    raise
+        if args.command == "run":
+            executable = args.codex or shutil.which("codex")
+            if executable is None or args.codex_home is None or not args.model:
+                raise ValueError(
+                    "run requires native Codex, --codex-home and --model "
+                    "(or CODING_AGENT_CODEX_HOME/MODEL)"
+                )
+            return await execute_plan(
+                args.path,
+                workspace=args.workspace,
+                approve=args.approve,
+                config=CodexSettings(
+                    executable=Path(executable).resolve(strict=True),
+                    home=Path(args.codex_home).resolve(),
+                    model=args.model,
+                ),
+                secrets=secrets,
+            )
         if args.command in {"status", "graph"}:
             return inspect_plan(args.path)
         if args.command == "plan":
@@ -88,22 +166,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 refresh=args.refresh,
                 reason=args.reason,
                 new_plan=args.new,
-                secrets=tuple(filter(None, (os.environ.get("OPENAI_API_KEY"),))),
+                secrets=secrets,
             )
-            if args.model:
-                settings = GenerationSettings(
-                    model=args.model, max_output_tokens=16384, timeout_seconds=60
-                )
-                async with OpenAIProvider(settings) as provider:
+            if args.model or config:
+                async with model_provider(16384) as provider:
                     return await plan(args.path, args.request, provider=provider, **options)
             return await plan(args.path, args.request, **options)
         scope = ScopePolicy(forbidden=tuple(args.forbid))
-        secrets = tuple(filter(None, (os.environ.get("OPENAI_API_KEY"),)))
-        if args.model:
-            settings = GenerationSettings(
-                model=args.model, max_output_tokens=8192, timeout_seconds=60
-            )
-            async with OpenAIProvider(settings) as provider:
+        if args.model or config:
+            async with model_provider(8192) as provider:
                 return await initialize(
                     args.path,
                     refresh=args.refresh,
@@ -123,12 +194,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     try:
+        if getattr(args, "env_file", None) is not None:
+            config = load_assistant_config(args.env_file, model=args.model)
+            secrets = (*secrets, config.api_key.get_secret_value())
         result = asyncio.run(run())
     except (OSError, ValueError, ProviderError, EventWriteError) as error:
         # Provider errors contain a fixed category; arbitrary SDK bodies are never exposed.
-        safe_error = Sanitizer(tuple(filter(None, (os.environ.get("OPENAI_API_KEY"),)))).text(
-            str(error)
-        )
+        safe_error = Sanitizer(secrets).text(str(error))
         parser.exit(2, f"agent {args.command}: {safe_error}\n")
     except KeyboardInterrupt:
         parser.exit(
@@ -136,6 +208,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if args.json:
         print(result.model_dump_json())
+    elif isinstance(result, RunResult):
+        print(f"{result.status}: {result.reason}")
+        if result.spec is not None:
+            print(
+                f"Session limits: {result.spec.max_tool_calls} tool requests, "
+                f"{result.spec.max_model_calls} model segments, "
+                f"{result.spec.max_total_attempts} Coder attempts"
+            )
+        if result.worktree:
+            print("Worktree: " + result.worktree)
+        if result.journal:
+            print("Journal: " + result.journal)
+        print("Requirement complete: false")
+    elif isinstance(result, RunHistory):
+        if args.command == "diff":
+            print("Recorded execution diff; later manual edits are not included.")
+            print(
+                result.diff
+                if result.diff_recorded
+                else "No complete diff snapshot recorded; inspect history and retained workspace."
+            )
+        elif args.command == "history":
+            for event in result.records.events:
+                print(f"{event.sequence} {event.kind} {event.task_id or '-'}: {event.reason}")
+        else:
+            print(f"Session {result.session_id}: {result.status}")
+            for task_id, state in result.states.items():
+                print(f"{task_id}: {state}")
+        if result.records.unresolved or result.records.incomplete_tail:
+            print("Incomplete records; inspect actual state before recovery.")
+        print("Requirement complete: false")
     elif isinstance(result, PlanningResult):
         print(result.summary or "\n".join(result.blockers))
         if result.path:
@@ -179,4 +282,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "Answer required questions in project instructions or --rule, then "
                 "reassess with --refresh --model MODEL. Offline refresh preserves open questions."
             )
-    return 2 if result.status in {"stale", "blocked"} else 0
+    if isinstance(result, RunResult):
+        return (
+            130 if result.status == "cancelled" else 0 if result.status == "tasks_verified" else 2
+        )
+    return 2 if result.status in {"stale", "blocked", "incomplete"} else 0

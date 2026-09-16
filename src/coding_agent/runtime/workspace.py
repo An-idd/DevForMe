@@ -56,7 +56,8 @@ class Workspace:
         self.scope = ScopePolicy.model_validate(scope)
         for pattern in excluded:
             relative_parts(pattern.removesuffix("/**"))
-        self.excluded = tuple(sorted(set(excluded)))
+        # Preserve the exact selection policy bound into the approved snapshot.
+        self.excluded = tuple(excluded)
         executable = git_executable or Path(shutil.which("git") or "/usr/bin/git")
         self.git = executable.resolve(strict=True)
         if any(self.git.is_relative_to(p) for p in (self.source, self.directory)):

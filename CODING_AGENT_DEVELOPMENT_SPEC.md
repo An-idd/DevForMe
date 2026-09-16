@@ -2478,7 +2478,7 @@ and `providers/runtime.py` under `src/coding_agent/`.
 
 - D06: V1 selects **OpenAI Responses API**, with the official Python SDK pinned to
   3.14.1. The model is explicit controller configuration; credentials come from the
-  environment or a secret constructor argument. Other API providers remain future work.
+  environment or a secret constructor argument. The user-authorized Zhipu extension is specified in Section 32.3.
   The separately authorized local coding-engine adapter is described in Section 32.1.
 - The transport returns validated text, structured draft data or function-call requests,
   plus actual response identity and available token usage. It does not execute tools,
@@ -2519,8 +2519,9 @@ protocol; do not introduce another agent framework or a parallel state authority
 
 The first implementation is CodexCoder in executors/codex.py. Claude Code and Pi
 remain planned, not implemented. Their adapters must establish equivalent enforcement
-and recording before coding can be supported. P06/P07 context construction and the
-complete P08 application/CLI integration remain required.
+and recording before coding can be supported. P08 now integrates P06/P07 context
+and the application/CLI path described in Section 32.2; live account and cross-platform
+acceptance remain outstanding.
 
 The bridge uses the installed native Codex App Server with JSONL stdio. The experimental
 contract is pinned to CLI 0.154.0-alpha.6.2: environments=[] at thread and turn creation,
@@ -2577,6 +2578,121 @@ by the pinned local CLI; documentation alone does not establish this repository'
 enforcement or account compatibility.
 
 ---
+
+
+## 32.2 P08 application execution boundary
+
+application.execution.run consumes the current immutable P07 plan and P06 knowledge.
+Missing initialization invokes the existing offline setup and asks for a reviewed plan.
+The P08 CLI deliberately requires a saved plan: agent run --path ROOT --workspace NEW
+--codex-home DEDICATED --model MODEL. Optional --codex selects the native executable.
+A preview reports the RunSpec fingerprint and limits without launching Codex or creating
+a Worktree. --approve FINGERPRINT records controller authorization matching that exact
+request; an Agent response is never an approval.
+
+RunSpec adds executor_revision (a digest of Codex configuration and workspace location),
+max_tool_calls=30 and max_model_calls=31. These participate in the approval fingerprint.
+Journal counters derive from durably recorded requests, including failed/interrupted
+calls, and are shared across Coder instances. Context reads consume the tool allowance;
+a final denied request is still recorded. Controller snapshot/diff operations are not
+Agent capabilities and remain available for final inspection after the Agent budget.
+Existing per-task/total attempt and worker time limits also apply. The adapter keeps its
+per-attempt 20-call/60-second defaults. Model counts represent recorded bridge segments,
+not exact HTTP counts, token consumption or a session-wide monetary ceiling. P11 still
+owns persistent budgets across reconciled runs and milestones.
+
+A run uses session ID run-<plan-id>, including across plan versions, and exclusively
+creates .agent/run-<plan-id>/ under the same controller lock used by initialization and
+planning. Existing execution directories are rejected instead of resuming or resetting
+attempts. Preserve partial artifacts and workspaces; --new is an independent proposal,
+not an implicit retry or recovery. An authorization artifact is recorded before the
+controller-only Worktree prepare request. P04 preserves the exact exclusion sequence
+bound into the approved snapshot rather than silently reordering the capture policy.
+
+TaskContextPack binds task identity, the full plan digest, knowledge and live workspace
+revisions, requirement, risk/complexity assessment, global acceptance and pending scope.
+It includes applicable rules with stable IDs, requested knowledge entries, sourced
+assumptions, unresolved questions and coverage gaps. Immutable knowledge excerpts and
+current source text are distinguished. Current source reads pass through ToolRuntime;
+each excerpt is bounded to 32 KiB and marked when truncated. The whole pack is bounded
+to 512 KiB; an overflow blocks rather than deleting required rules. Persist the pack
+before model dispatch. Repository text is untrusted input and cannot expand permissions.
+
+Before model/tool dispatch, recheck the source project, knowledge/user guidance and
+active plan. Edits to instruction files inside the Worktree also require reconciliation
+before another action. Expected implementation changes update the workspace revision.
+External simultaneous processes remain outside the runtime's cooperative ownership
+assumption; no Worktree or command-prefix check is an OS sandbox.
+
+CoderResult optionally carries a structured ReplanRequest: trigger (scope, coupling,
+uncertainty, verification or dependency), reason, proposed complexity and needed changes.
+P08 requires these details when Coder requests replanning; the older P02 protocol remains
+loadable. WorkflowEngine records the draft and stops dispatch without silently revising
+the plan. Controller ImplementationResult records before/after revisions, actual changed
+paths, dispatched commands and tool request IDs. Exit codes/statuses stay in the correlated
+ToolResults. These observations and model claims are separate; no summary produces Evidence.
+
+P09/P10 are not configured here. Verification returns no execution evidence, and the
+existing gate blocks missing checks. The unavailable reviewer cannot certify completion.
+A declared refactor or explicit baseline_check_ids blocks Worktree modification because the baseline cannot
+yet be established. Implemented drafts, failed attempts and partial changes remain in the
+independent Worktree; there is no source overwrite, cleanup, commit or delivery operation.
+Cancellation records interruption and retains a final snapshot/diff when recording and
+input checks remain usable. Unknown operation outcomes keep the controller lock.
+
+agent status prefers an existing current-plan execution; otherwise it displays the plan.
+agent status/diff/history --session run-<plan-id> inspect a specific historical execution.
+These commands are read-only: validate the journal and referenced Diff digest, show
+incomplete tails/unresolved requests, and derive task states from recorded transitions.
+Diff is the last recorded aggregate snapshot (with explicit truncation), not a claim
+about later manual edits. requirement_complete remains false; session record completeness
+is distinct from task success. Automatic resume and final delivery remain P12.
+
+Offline acceptance includes a real pinned Codex process against a loopback synthetic
+model, actual Worktree patches, request/result ordering, scope/approval/freshness refusal,
+cancellation, budget exhaustion and recording failures. An independent opt-in P08 account
+smoke uses CODING_AGENT_RUN_LIVE=1 with a synthetic project and a three-tool, 60-second
+Coder attempt. Skipping it or testing the loopback service cannot prove account/model
+compatibility or live planning/coding quality.
+
+## 32.3 Explicit dotenv model configuration
+
+User-authorized addition (2026-09-16): retain OpenAI Responses and add Zhipu
+Chat Completions for read-only Explorer/Planner calls. This supersedes D06's
+original single API implementation scope; it does not introduce agent teams,
+a plugin registry or a second coding loop.
+
+The CLI's init/plan commands accept --env-file PATH as explicit model opt-in.
+The path is relative to the process working directory, with no parent search.
+Without that option, existing offline and --model/OpenAI behavior remains.
+Read CODING_AGENT_PROVIDER, CODING_AGENT_API_URL, CODING_AGENT_MODEL and CODING_AGENT_API_KEY;
+same-name process environment variables override file values, including empty values,
+and --model overrides the configured model. Require all four nonempty values.
+The bounded UTF-8 parser supports BOM, LF/CRLF, blank lines, full-line comments and
+whole-value quotes; it performs no interpolation, escaping, export or command execution.
+Reject duplicate/unknown CODING_AGENT_ model keys. Ignore the separate
+CODING_AGENT_CODEX_ namespace without importing it. The previous assistant prefix
+is no longer read after the user-authorized naming migration. Never export dotenv values into process
+environment or include secret values in configuration errors. Inject the key into
+the existing journal/context sanitizer. Local .env files are Git-ignored and remain
+excluded from exploration and execution snapshots.
+
+Zhipu uses the installed official OpenAI SDK's Chat Completions transport,
+an explicitly configured HTTPS full /chat/completions endpoint, no redirects or retries,
+the existing output-token and timeout bounds, non-streaming output and disabled thinking.
+Supply the requested schema in the system prompt and request json_object;
+strict local Pydantic validation remains authoritative. This is not server-side
+strict JSON Schema enforcement. Reject tools, tool history, opaque replay,
+incomplete/refused/non-text output and invalid schemas; do not persist raw reasoning.
+Record actual identity and available usage through ModelRuntime. No draft grants
+permissions, creates Evidence or marks a task VERIFIED. OpenAI dotenv selection
+retains the fixed official Responses endpoint. Local Codex configuration remains separate.
+
+Official references: [Coding endpoint](https://docs.bigmodel.cn/cn/guide/develop/gork)
+and [Chat Completions](https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E5%AF%B9%E8%AF%9D%E8%A1%A5%E5%85%A8).
+The example glm-5.3 model is user-selected; live model availability, account access
+and structured-output quality are unverified. Offline HTTP simulations are not live acceptance.
+
 
 # 33. Recommended Repository Structure
 
