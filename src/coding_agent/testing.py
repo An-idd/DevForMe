@@ -1,9 +1,12 @@
-"""Explicitly scripted, in-memory P02 doubles. Never execute commands or certify code."""
+"""Scripted, in-memory workflow and model doubles; never execute or certify code."""
 
 from collections.abc import Callable, Iterable, Iterator
 from typing import Literal
 
+from pydantic import BaseModel
+
 from .core import Evidence, TaskSpec
+from .core.provider import GenerationSettings, Message, ModelResponse, ToolSchema
 from .core.workflow import (
     CoderResult,
     ReviewResult,
@@ -106,3 +109,31 @@ class FakeEventWriter:
         if event.sequence != len(self._events) + 1:
             raise ValueError("non-contiguous event sequence")
         self._events.append(event)
+
+
+class FakeModelProvider:
+    """Script raw model drafts/failures, including invalid drafts for boundary tests."""
+
+    name = "fake"
+
+    def __init__(
+        self,
+        results: Iterable[ModelResponse | BaseException],
+        *,
+        settings: GenerationSettings | None = None,
+    ) -> None:
+        self.settings = settings or GenerationSettings(model="fake")
+        self._script = iter(results)
+        self.calls: list[
+            tuple[tuple[Message, ...], tuple[ToolSchema, ...], type[BaseModel] | None]
+        ] = []
+
+    async def generate(
+        self,
+        messages: tuple[Message, ...],
+        *,
+        tools: tuple[ToolSchema, ...] = (),
+        response_schema: type[BaseModel] | None = None,
+    ) -> ModelResponse:
+        self.calls.append((messages, tools, response_schema))
+        return _next(self._script)

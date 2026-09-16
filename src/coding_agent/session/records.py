@@ -74,10 +74,11 @@ def inspect_journal(path: Path, *, max_bytes: int = 64 * 1024 * 1024) -> Journal
         session = event.session_id
         if event.event_id != f"{session}:{event.sequence}":
             raise EventWriteError("invalid event identity")
-        if event.tool_request is not None:
+        if event.tool_request is not None or event.model_request is not None:
             pending[event.event_id] = event
-        if event.tool_result is not None:
-            request_event_id = event.tool_result.request_event_id
+        result = event.tool_result or event.model_result
+        if result is not None:
+            request_event_id = result.request_event_id
             _check_result(event, pending.get(request_event_id))
             del pending[request_event_id]
         events.append(event)
@@ -87,15 +88,18 @@ def inspect_journal(path: Path, *, max_bytes: int = 64 * 1024 * 1024) -> Journal
 
 
 def _check_result(event: WorkflowEvent, request: WorkflowEvent | None) -> None:
-    assert event.tool_result is not None
+    result = event.tool_result or event.model_result
+    assert result is not None
+    original = None if request is None else request.tool_request or request.model_request
     if (
         request is None
-        or request.tool_request is None
-        or request.tool_request.request_id != event.tool_result.request_id
+        or original is None
+        or (event.tool_result is not None) != (request.tool_request is not None)
+        or original.request_id != result.request_id
         or request.task_id != event.task_id
         or request.revision != event.revision
     ):
-        raise EventWriteError("uncorrelated or duplicate tool result")
+        raise EventWriteError("uncorrelated or duplicate operation result")
 
 
 class JsonlJournal:
@@ -152,14 +156,15 @@ class JsonlJournal:
         self.check_writable()
         try:
             event = WorkflowEvent.model_validate(self.sanitizer.tree(event.model_dump(mode="json")))
-            if self._pending and event.kind != "tool_finished":
-                raise EventWriteError("resolve the pending tool before recording further work")
+            if self._pending and event.kind not in {"tool_finished", "model_finished"}:
+                raise EventWriteError("resolve the pending operation before recording further work")
             if event.session_id != self.session_id or event.sequence != self._sequence + 1:
                 raise ValueError("journal session or sequence mismatch")
             if event.event_id != f"{self.session_id}:{event.sequence}":
                 raise ValueError("journal event identity mismatch")
-            if event.tool_result is not None:
-                _check_result(event, self._pending.get(event.tool_result.request_event_id))
+            result = event.tool_result or event.model_result
+            if result is not None:
+                _check_result(event, self._pending.get(result.request_event_id))
             data = (event.model_dump_json() + "\n").encode()
             if len(data) > 4 * 1024 * 1024:
                 raise ValueError("event exceeds size limit")
@@ -176,10 +181,10 @@ class JsonlJournal:
                 "durable event append failed; operation outcome may be unresolved"
             ) from error
         self._sequence = event.sequence
-        if event.tool_request is not None:
+        if event.tool_request is not None or event.model_request is not None:
             self._pending[event.event_id] = event
-        if event.tool_result is not None:
-            del self._pending[event.tool_result.request_event_id]
+        if result is not None:
+            del self._pending[result.request_event_id]
 
     def artifact(self, label: str, content: str, *, limit: int = 1_048_576) -> ArtifactRef:
         self.check_writable()
@@ -247,9 +252,11 @@ class JsonlJournal:
     def begin_operation(self, request_id: str) -> None:
         self.check_writable()
         if self._pending:
-            raise EventWriteError("unresolved tool request; inspect actual state before continuing")
+            raise EventWriteError(
+                "unresolved operation request; inspect actual state before continuing"
+            )
         if self._active or request_id in self._request_ids:
-            raise ValueError("concurrent or repeated tool request; inspect existing outcome")
+            raise ValueError("concurrent or repeated operation request; inspect existing outcome")
         self._active = True
         self._request_ids.add(request_id)
 

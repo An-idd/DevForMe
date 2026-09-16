@@ -1,8 +1,8 @@
 # Verified Coding Agent — 开发计划
 
-> 版本：V1 / 2026-09-16 / P04 工作区实现
+> 版本：V1 / 2026-09-16 / P05 与 Codex adapter 离线实现，真实冒烟待验证
 > 依据：[开发规格](CODING_AGENT_DEVELOPMENT_SPEC.md)，重点参考 §16、§24、§29–31、§35–39、§42、§44–48。
-> 当前状态：P01/P02 已完成；P03 安全修复与 Windows 适配已完成本机验证；macOS 集成复验待完成，状态为 IN_PROGRESS。用户明确授权继续 P04；P04 功能与 Windows 验收已完成，macOS 实机复验待完成，保持 IN_PROGRESS；P05–P12 尚未开始。
+> 当前状态：P01/P02 已完成；P03 安全修复与 Windows 适配已完成本机验证；macOS 集成复验待完成，状态为 IN_PROGRESS。用户明确授权继续 P04；P04 功能与 Windows 验收已完成，macOS 实机复验待完成，保持 IN_PROGRESS；用户明确授权继续 P05，模型适配已完成离线实现，真实 API 冒烟待验证，P05 保持 IN_PROGRESS；用户另行授权本地 coding adapter，P08 提前实现 Codex 接入基础，保持 IN_PROGRESS；P06/P07/P09–P12 尚未开始。
 
 ## 1. 目标与推进方式
 
@@ -31,7 +31,7 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 | 源码布局 | 使用 `src/coding_agent/` 包；在包内保持规格要求的 core、agents、runtime、tools、verification、context、session 等职责边界 |
 | 建目录方式 | 当前阶段需要时再建立文件和目录，不预建规格 §33 的全部目录树 |
 | 执行方式 | V1 同时运行一个业务任务；不实现并行调度或远程 Worker |
-| 模型 | P05 仅接入一个用户可用的 Provider；单元测试和故障验证使用 Fake，不依赖 API 凭据 |
+| 模型 | 保留一个 API Provider（OpenAI）；本地 coding 引擎通过 Coder adapter 接入，首个为 Codex；Claude Code/Pi 后续评估。离线验证不依赖账号 |
 | 持久化 | 先使用规格中的 JSON 状态快照、版本化计划、JSONL 事件/证据及工件目录；有明确需求时再引入 SQLite，避免两份可写状态真相 |
 | 验证策略 | 先支持显式配置和已识别的仓库命令；自动发现不能把未执行命令当作通过 |
 | 复杂度 | 分别记录 small/medium/large 与风险等级；通过 Explorer/Planner 评估范围、耦合、未知项和验证难度，决定单任务、任务图或分阶段执行 |
@@ -52,7 +52,7 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 | D03 | P02 / 已解决 | FAST 的精简流程与总体 Review、§39 两次审批要求关系不清 | 已同步 §11–12、§25–28、§31、§37、§39：所有模式保留声明检查及计划/交付授权边界；FAST 仅低风险且未声明审查时省略 Reviewer，仍经过 REVIEWING 和门禁；中/高风险分别至少 STANDARD/STRICT；完整 RunSpec 指纹匹配的授权在任务/修复间复用，交付授权单独处理 |
 | D04 | P04 / 已解决 | §18、§37 Phase 4、§49 对 Worktree 所属版本有不同表述 | 已统一 §18–19、§20、§49：V1/P04 纳入串行会话 Worktree；主仓库只读，会话独立 Git 基线包含当前未提交/未跟踪输入；重置创建新树并保留旧树，清理拒绝未知改动；并行、交付合并及重启协调保持后续范围 |
 | D05 | P03 / 已解决 | `network: false`、受限 shell 和控制记录保护缺少具体执行边界 | 已同步规格 §20–21.1、§30–31：原生文件工具使用 POSIX 目录描述符或 Windows 无跟随句柄；进程使用 macOS 只读沙箱或 Windows LPAC/Job 及受控执行副本，写入通过 Patch；不支持的权限/平台明确拒绝。数据库权限按资源访问定义，测试数据库与需写入/子进程的验证后端仍是 P09 前置条件；不能用命令前缀或 Worktree 声称隔离 |
-| D06 | P05 | 尚未选择真实 Provider 与可用凭据 | 选择一个可用 Provider，并定义结构化输出、工具调用、超时及用量返回；缺少凭据时继续离线实现，明确记录真实接入尚未验证 |
+| D06 | P05 / 接口选择已确定，真实验证待完成 | 尚未选择真实 Provider 与可用凭据 | 保留 OpenAI Responses API 与官方 Python SDK。用户追加本地 coding 引擎需求：Codex adapter 复用现有 Coder 协议，Claude Code/Pi 后续接入；工作流、权限和证据仍由本项目控制。API 与本地账号真实冒烟分别验收 |
 
 ## 4. 阶段总览
 
@@ -64,10 +64,10 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 | P02 工作流引擎 | P01 | 单任务调度、状态机、QualityGate、Fake 完整生命周期 | DONE |
 | P03 工具与执行记录 | P02 | PolicyEngine、Tool Runtime、持久事件、工件记录 | IN_PROGRESS |
 | P04 工作区 | P03 | Git 状态/差异/快照、Worktree、受控恢复与清理 | IN_PROGRESS |
-| P05 模型适配 | P04 | Provider 接口与一个真实实现 | NOT_STARTED |
+| P05 模型适配 | P04 | Provider 接口与一个真实实现 | IN_PROGRESS |
 | P06 Explorer / init | P05 | 项目梳理、用户规范、项目知识与增量刷新、初始化 CLI | NOT_STARTED |
 | P07 Planner | P06 | 复杂度评估、PlanDraft 校验/编译、版本化分阶段计划、规则引用、规划 CLI | NOT_STARTED |
-| P08 Coder | P07 | 受约束的工具调用循环、真实修改与完整留痕 | NOT_STARTED |
+| P08 Coder | P07 | 引擎 adapter、受约束执行与留痕；当前仅提前实现 Codex 基础接入 | IN_PROGRESS |
 | P09 Verification | P08 | 测试/构建/静态检查、结果解析、版本化 Evidence | NOT_STARTED |
 | P10 Reviewer | P09 | 独立上下文审查、结构化问题、规范与文档检查 | NOT_STARTED |
 | P11 修复与重规划 | P10 | 有界修复循环、复杂度重评估、计划变更和证据失效处理 | NOT_STARTED |
@@ -120,10 +120,12 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 
 ### P05 — 模型适配
 
-- [ ] 处理 D06，实现规格要求的 ModelProvider 接口与一个真实 Provider。
-- [ ] 支持结构化输出、工具请求/响应关联、超时、错误分类和可用的用量数据。
-- [ ] 使用 Fake/模拟响应验证无效结构、工具调用参数错误、限流、超时和中断。
+- [x] 处理 D06，实现 ModelProvider 接口与 OpenAI Responses 适配；真实服务验收单独保留待办。
+- [x] 支持结构化输出、工具请求/响应关联、超时、错误分类和可用的用量数据。
+- [x] 使用 Fake/模拟响应验证无效结构、工具调用参数错误、限流、超时和中断。
 - [ ] 有可用凭据时执行一次有界真实冒烟，记录模型与配置；将其与离线测试结果分开报告。
+
+**阶段边界统一：** 规格 Phase 5 原列出 PlanDraft，但具体模型属于 P07；本阶段验证通用 schema 接口和已有 RequirementContract/ReviewResult，P07 接入实际 PlanDraft，不提前实现 Planner。
 
 **验收：** 无效模型结果不能直接进入工作流状态或绕过工具权限；业务层不依赖某个 Provider 的原始响应结构。真实接入未验证时不能宣称该交付已完成。
 
@@ -151,11 +153,15 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 
 ### P08 — Coder 与首次真实修改
 
-- [ ] 实现有步数、时间及资源边界的模型—工具—观察循环。
+- [x] 用户追加授权：实现 CodexCoder，复用既有 Coder/CoderResult 和 Tool Runtime；完成 Fake 与真实 CLI + 本地假模型验证。
+- [ ] 集成 P06/P07 上下文及应用流程，复用外部引擎的编码循环，统一执行预算；确有需求时才实现直接 API 编码循环。
+- [ ] 使用专用 Codex 登录目录完成真实账号冒烟；之后评估 Claude Code、Pi 的同等权限与留痕接入。
 - [ ] 使用当前任务、计划和知识修订构建上下文；全部动作经过 Tool Runtime。
 - [ ] 返回 ImplementationResult 或显式 replan 请求；真实文件列表和命令记录由运行时产生。
 - [ ] 发现额外调用方、共享状态或范围扩大时提交复杂度重评估请求，不等连续失败后才纠正计划。
 - [ ] 提供 `agent run` 与 diff/history 的可用进度查看；在受控样本仓库完成一次实际修改。
+
+**阶段边界：** 用户明确授权 adapter 提前交付，不据此跳过 P06/P07。当前提供 TaskSpec、Revision 和修复反馈；完整项目知识/来源上下文与 agent run 仍待后续集成。
 
 **验收：** 所有动作能关联任务和计划；模型自述与真实结果不符时采用真实记录；达到边界时停止调度并保留工件。此阶段尚不能把缺少后续验证/审查的任务标为 VERIFIED。
 
@@ -249,6 +255,7 @@ python -m mypy src/coding_agent
 | 2026-09-16 / P03 安全修复 | 用户授权修复审查中的两项 P1；开工基线 f858a2f、工作区干净；复用路径策略过滤 Git 索引清单，扩展多行秘密脱敏，补充回归测试；不增加依赖 | Windows 项目虚拟环境；受影响检查及完整检查见下方本次记录 | 真实 macOS 沙箱/POSIX 工件集成复验待完成，P03 保持 IN_PROGRESS；不推进 P04 | ToolRuntime、Sanitizer、tests/test_tool_security.py、tests/test_tools.py |
 | 2026-09-16 / P03 Windows 适配 | 用户明确授权“适配”；保留安全修复 Diff，扩展原生文件/日志与真正隔离的 Windows 执行；风险 high、复杂度 large（Win32 ABI、ACL、进程生命周期和 Git 平台差异耦合） | 发现原生 Git 无法在 AppContainer 内完成路径规范化；增加 Windows-only Dulwich 依赖并同步 D05，不放宽全局 ACL 或隔离 | 真实 Windows 边界、超时/取消及完整检查；保留 macOS 复验待办，不推进 P04 | runtime Windows 后端、core/paths.py、tests/test_windows.py、规格 §20–21.1 |
 | 2026-09-16 / P04 开始 | 用户明确指令“continue P04”；基线 4ad2458、工作区干净。按用户指令推进，保留 P03 的 macOS 复验待办；范围仅 D04、工作区、快照、恢复及工具集成。复杂度 large、风险 high：文件身份、日志耐久性、Git 管理与跨平台执行边界耦合 | 首批 P04 及故障测试、Windows Worktree/LPAC 集成已运行；完整结果见下方本次记录 | 不新增依赖；不推进 Provider、CLI、P09 验证执行或 P12 自动重启恢复 | core/workspace.py、runtime/workspace.py、runtime/_snapshots.py、tools/runtime.py、tests/test_workspace.py |
+| 2026-09-16 / P05 开始 | 用户明确授权 continue P05；基线 e38a5ff、工作区干净。保留 P03/P04 macOS 待复验状态；本次仅供应商无关接口、一个真实 Provider、模型调用留痕及离线/有界真实冒烟 | 已核对 OpenAI 官方 Responses、Structured Outputs、Function Calling 文档；当前无 OpenAI/Anthropic API 凭据，未调用真实模型 | 复杂度 large、风险 high：异步请求取消、结构化数据/工具关联及共享日志边界耦合。引入官方 openai 3.14.1 SDK，避免自写网络客户端；不推进 P06–P12，不引入多 Provider 或 Agent 循环 | 规格 §32、Phase 5；本文件 |
 
 ### P01 验收记录（2026-09-15）
 
@@ -600,9 +607,152 @@ Ruff 的测试夹具别名问题已修正。全量检查后补齐共享运行时
 跨重启 reconciliation/resume 和保留数据回收属于 P12。差异工件供检查，
 不宣称已经完成交付补丁应用、合并或 Verification Evidence 生成。
 
+### P05 实现与验收记录（2026-09-16）
+
+**实际交付：** [模型领域接口](src/coding_agent/core/provider.py)、
+[OpenAI 适配器](src/coding_agent/providers/openai.py)、
+[模型运行时](src/coding_agent/providers/runtime.py)、
+[共享事件](src/coding_agent/core/workflow/events.py)、
+[共享记录器](src/coding_agent/session/records.py)、
+[SDK 离线测试](tests/test_provider.py)、
+[故障与权限集成测试](tests/test_model_runtime.py) 和
+[真实冒烟入口](tests/test_provider_live.py)。
+
+- SDK 固定为 openai 3.14.1；业务不接触 SDK Response。SDK 自动重试关闭，
+  模型、超时和输出预算由控制器明确配置，API key 不写入源文件或记录。
+- 严格解析对象输出和函数参数，核对工具结果 ID；拒绝重复调用、未知工具、拒答和不完整响应。
+  Responses 的加密推理续接信息只用于内存中下一轮调用，不写入模型输出工件。
+- ModelRuntime 与 ToolRuntime 共享先记请求再执行的记录顺序和单次操作边界。
+  可见草稿脱敏，输入只记指纹；记录失败或缺失结果停止新副作用。
+  Fake 返回的无效结果也在这一边界拒绝，模型草稿不会成为任务状态或 Evidence。
+- 超时和取消终止本地等待；远端是否处理/计费可能未知，不写零用量或自动重试。
+  实际输入/输出/缓存/推理 token 数按服务返回记录，不估算价格。
+- 真实冒烟仅使用合成提示及临时文件，最多 3 次调用，每次 1,024 输出 tokens / 30 秒；
+  未配置 OPENAI_API_KEY、OPENAI_MODEL，当前没有运行真实模型。
+  P05 保持 IN_PROGRESS；不宣称真实接入已验收，不推进 P06–P12。
+
+**验证环境：** Windows 11 build 26200 / NTFS、Python 3.12.14、项目虚拟环境。
+官方接口核对范围与有界真实冒烟命令见 [README](README.md)。
+
+| 检查 | 实际结果 |
+| --- | --- |
+| P05 首批离线检查 | 62 passed、1 skipped（真实冒烟）；9.10 秒 |
+| 收尾相关回归：provider/model_runtime/provider_live/workflow/tools | 188 passed、20 skipped；12.27 秒。补充非模型返回值和失败记录一致性 3 个回归后，重跑全部受影响模块 |
+| 完整 `python -m pytest -q --tb=short -ra` | 608 passed、22 skipped；216.94 秒。包含真实 Windows LPAC/Worktree 回归；随后 3 项收尾新增测试由上一行覆盖 |
+| Ruff / format | All checks passed；50 files already formatted |
+| mypy | 35 个源文件通过 Windows 与 darwin 目标；后者不替代 macOS 实机测试 |
+| 冒烟入口的离线演练 | 使用模拟 HTTP 跑通同一入口的 3 次模型调用和真实临时文件读取，未使用网络或真实凭据 |
+| 依赖与差异 | `pip check` 无损坏依赖；`git diff --check`、本地 Markdown 链接与代码块检查通过 |
+| 真实 API | 未执行；缺少 key/model 配置，不计为通过 |
+
+22 项全量跳过为 18 项 macOS 集成、3 项 POSIX 专属测试和 1 项真实模型冒烟，均不计为通过。
+
+**过程中的失败与修正：** 首批 SDK 模拟响应遗漏新版协议必填的
+`cache_write_tokens`，严格解析正确拒绝了响应；补齐模拟协议字段并将其纳入可用用量。
+20 ms 的超时样本可能在 SDK 请求准备时结束，尚未进入传输；改为 500 ms 的有界等待，
+继续断言传输确实被取消。补齐错误 JSON、历史 call ID 重用及各项用量约束。
+收尾静态检查发现 Fake 模块说明行过长，缩短后 Ruff/格式检查通过。
+这些是离线测试与实现修正，不能代替真实服务兼容性验证。
+
+### Codex adapter 扩展记录（2026-09-16）
+
+**授权与范围调整：** 用户提出复用本地 Claude Code/Codex/Pi，并回复“继续”。
+开发计划更新为本次 adapter 扩展版本：保留 P05 的一个 API Provider，提前交付 P08 的
+首个 Codex adapter。复杂度 large、风险 high，原因是外部进程生命周期、协议关联、
+共享日志和工具权限耦合。不新增框架或依赖，不重置任务尝试次数与修复预算。
+Claude Code/Pi 仅规划；P06/P07、完整 P08 CLI 与上下文集成不计为完成。
+
+**实际交付：** [CodexCoder](src/coding_agent/executors/codex.py)、
+[stdio 与进程管理](src/coding_agent/executors/_codex_rpc.py)、
+[离线与真实 CLI 协议测试](tests/test_codex.py)、
+[真实账号冒烟入口](tests/test_codex_live.py)。
+
+- Codex 负责编码循环，控制器转接动态工具并校验最终 CoderResult。
+  不引入 LangGraph、Agent 团队、注册工厂或通用插件系统。
+- 复用 ModelRuntime 分段请求/结果记录：Codex 提交工具请求后等待，模型结果先落盘，
+  Tool Runtime 再记录并执行；下一段模型请求落盘后才发送工具结果。
+  不扩展 JsonlJournal 的并发或嵌套操作规则。
+- 固定已验证 CLI 0.154.0-alpha.6.2；关闭原生环境访问、shell、插件、钩子等能力。
+  核对返回版本、环境、目录、指令来源和权限；不匹配则停止。项目读写、shell、Git
+  均通过五个 runtime 工具。Worktree、提示词和进程分组不被当作 OS 沙箱。
+- 使用项目与日志之外的专用 CODEX_HOME、固定配置及独占锁；不覆盖其他配置，
+  不复制日常全局配置/凭据。由用户在专用目录运行 codex -c cli_auth_credentials_store=file login；
+  凭据刷新与 CLI 私有缓存由 Codex 管理，不属于本项目权威日志。
+- Windows 隐藏原生 exe，用 Job 管理生命周期/禁止子进程；POSIX 使用独立进程组。
+  实际 shell 权限继续由 P03 执行。总时限、工具次数和协议大小均有限制；
+  取消等待进程结束，日志失败停止新动作，已完成修改保留。
+- Codex 未暴露这里可强制的单次输出 token 上限，记录 max_output_tokens=null；
+  OpenAI API 适配仍要求明确上限。CLI 内部有限传输重试受总时限约束，
+  一条模型记录不等于一次 HTTP 请求。仅在最终结果记录报告的累计用量，
+  中间段保持未知，避免重复计数；未报告消耗不估算。
+- P05/P08 保持 IN_PROGRESS。真实登录/模型调用与 macOS 实机验证未执行；
+  本地假模型不使用真实凭据，不证明账号、服务或模型行为可用。
+
+**过程中的失败与修正：** 扩大核心日志并发模型的操作被自动审批以风险过宽拒绝，
+未执行；改为复用已有串行分段记录。真实 CLI 拒绝覆盖内置 openai provider 配置，
+已移除无效配置，不声称关闭了其所有内部重试。测试复现 turn/start 响应前
+先到达状态通知，现暂存通知，核对返回的 turn ID 后再处理。超长行测试初版缺少简短
+参数 ID，造成 pytest 路径/输出异常，已补 ID；skills.read 越界回归核对实际拒绝
+结果 skill package is not available，并确认项目内容未泄漏。
+
+**最终验证（Windows 11 build 26200 / Python 3.12.14）：**
+
+| 检查 | 实际结果 |
+| --- | --- |
+| adapter 初批回归 | 53 passed、1 skipped（真实账号冒烟），10.13 秒 |
+| 执行器与配置路径保护补充后定向回归 | 55 passed，10.63 秒 |
+| 完整 pytest | 666 passed、23 skipped，270.76 秒；包含真实 Windows LPAC、Worktree 及 Codex + 本机假模型 |
+| Ruff / format | All checks passed；55 files already formatted |
+| mypy | 38 个源码文件通过 Windows 与 darwin 目标；后者不替代 macOS 实机验证 |
+| 真实冒烟入口的离线演练 | 使用真实 Codex 和 3 个 loopback 模拟响应，跑通 read、patch、文件内容与实时快照断言；未使用真实凭据 |
+| 依赖、差异与文档 | pip check、git diff --check、UTF-8、Markdown 代码块和本地链接检查通过 |
+| 真实服务与其他平台 | 两条真实模型/账号冒烟未执行；macOS 实机未复验 |
+
+23 项跳过为 18 项 macOS 集成、3 项 POSIX 专属测试、2 项真实模型/账号冒烟，
+均不计为通过。执行器路径与配置目录现在都必须在任务项目和权威日志之外，
+防止任务工具改写下一次尝试的执行器。此前 P05 的检查历史保留在上一节。
+
+### Windows 自动测试弹窗修复（2026-09-16）
+
+用户报告自动测试弹出「python.exe - 系统错误：指定无效的句柄」。
+定位到旧句柄继承测试：沙箱子进程操作未继承的句柄，以
+STATUS_INVALID_HANDLE（0xC0000008）原生异常退出；旧断言仅要求非零退出，
+因此先前完整测试通过不能证明执行过程没有弹窗或等待人工确认。
+
+- [LPAC Job](src/coding_agent/runtime/_lowbox.py) 增加
+  JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION。未处理原生异常结束进程并返回实际错误码，
+  不修改控制进程的全局错误模式；保留文件、网络、进程数及内存限制。
+- [句柄回归](tests/test_windows.py) 改为由控制进程在子线程恢复前，
+  用 DuplicateHandle 检查实际句柄表，要求明确的 ERROR_INVALID_HANDLE；
+  沙箱子进程本身必须正常退出，不再把任意崩溃当作隔离成功。
+- 独立故障回归在临时沙箱子进程制造原来的无效句柄异常，要求直接记录
+  failed / 0xC0000008、无未完成请求，且宿主错误模式不变。
+
+**过程中的失败：** 初次改用子进程 os.get_handle_inheritable 查询仍触发同一原生异常，
+已改为上述控制进程检查。诊断时尝试 ctypes 查询错误模式，_ctypes 在当前沙箱中加载失败，
+因此不能据此判断异常策略是否生效；最终依据真实崩溃的退出码、超时状态与日志验证。
+没有放宽沙箱约束或把这些失败计为通过。
+
+**最终验证（Windows 11 build 26200 / Python 3.12.14，项目虚拟环境）：**
+
+| 检查 | 实际结果 |
+| --- | --- |
+| 两项定向回归 | 2 passed，4.17 秒 |
+| Windows 专项 | 41 passed，154.98 秒 |
+| 完整 pytest | 667 passed、23 skipped，285.11 秒 |
+| Ruff / format | All checks passed；55 files already formatted |
+| mypy | 38 个源文件通过 Windows 目标 |
+| 差异 | git diff --check 通过 |
+
+23 项跳过仍为 18 项 macOS 集成、3 项 POSIX 专属、2 项真实模型/账号冒烟，
+不计为通过。本次不新增依赖、不推进阶段；真实模型/账号与 macOS 实机待办保持不变。
+随后用户授权将 P05、Codex adapter 与本次 Windows 弹窗修复一并提交；阶段状态及未验证项保持不变。
+
 ## 9. 下一步执行单元
 
-1. P04 本机检查已完成；下一步由用户在 macOS/POSIX 复验当前 P03/P04 代码，再更新阶段状态。
-2. 用户已授权 P04，覆盖原“P03 复验后才能推进”的默认顺序；不将这一安排解释为
-   P03 已验收，也不自动推进 P05。
-3. P05 开始时先处理 D06，确定一个 Provider 与凭据条件；真实 API 冒烟与离线测试分别记录。
+1. 在专用 CODEX_HOME 登录，配置 CODING_AGENT_CODEX_HOME / CODING_AGENT_CODEX_MODEL，
+   显式执行 Codex 真实冒烟；OpenAI API 冒烟仍需 OPENAI_API_KEY / OPENAI_MODEL。
+   两条路径分别记录，缺少配置或跳过均不计为通过。
+2. 在 macOS/POSIX 复验 P03/P04、共享记录与 Codex 进程管理，保留未验证项。
+3. 后续按依赖推进 P06 Explorer/init 与 P07 计划/知识上下文，再完成 P08 应用流程。
+   Claude Code、Pi 需要先证明相同工具边界和留痕能力，不能直接开启不受控的原生工具。

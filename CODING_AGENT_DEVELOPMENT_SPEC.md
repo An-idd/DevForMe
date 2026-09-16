@@ -1577,7 +1577,11 @@ need child processes are unsupported. Absolute repository path arguments are
 mapped to the copy; absolute paths embedded in script text are not rewritten.
 LPAC receives only lpacAppExperience and registryRead capabilities needed for
 startup, not network capabilities. Its private profile and execution copies are
-removed before success is returned. Crash/orphan reconciliation remains P12.
+removed before success is returned. The Job uses
+[JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_limit_information)
+so unhandled native exceptions terminate with their failure code instead of waiting
+for a crash dialog. The controller's error mode is unchanged.
+Crash/orphan reconciliation remains P12.
 The minimum API version is Windows 10 1809; actual verification is limited to
 Windows 11 build 26200 / Python 3.12.14 / NTFS. Other versions require validation.
 
@@ -2292,34 +2296,127 @@ For an abrupt crash, generate the interrupted-session summary during recovery fr
 
 # 32. Model Provider Abstraction
 
-Do not couple business logic to one LLM vendor.
-
-Interface:
+Do not couple business logic to one LLM vendor. P05 uses immutable domain values:
 
 ```python
 class ModelProvider(Protocol):
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def settings(self) -> GenerationSettings: ...
 
     async def generate(
         self,
-        messages: list[Message],
-        tools: list[ToolSchema] | None = None,
+        messages: tuple[Message, ...],
+        *,
+        tools: tuple[ToolSchema, ...] = (),
         response_schema: type[BaseModel] | None = None,
-    ) -> ModelResponse:
-        ...
+    ) -> ModelResponse: ...
 ```
 
-Possible providers later:
+The P05 interface and implementation are `core/provider.py`, `providers/openai.py`
+and `providers/runtime.py` under `src/coding_agent/`.
 
-```text
-OpenAI
-Anthropic
-Gemini
-Qwen
-OpenAI-compatible
-local model
-```
+- D06: V1 selects **OpenAI Responses API**, with the official Python SDK pinned to
+  3.14.1. The model is explicit controller configuration; credentials come from the
+  environment or a secret constructor argument. Other API providers remain future work.
+  The separately authorized local coding-engine adapter is described in Section 32.1.
+- The transport returns validated text, structured draft data or function-call requests,
+  plus actual response identity and available token usage. It does not execute tools,
+  change workflow state, grant permission or issue verification evidence.
+- The controller-facing ModelRuntime persists `model_requested` before dispatch and
+  `model_finished` afterwards, sharing the Tool Runtime's session writer and sequence.
+  Records bind the revision, configuration and input fingerprint. Visible output artifacts
+  are sanitized; opaque replay state and full prompts are not journaled.
+  Missing results remain unresolved; recording failure prevents new side effects.
+- Tool definitions reject unknown fields. Local validation checks the output schema,
+  tool names, JSON arguments and call/result correlation. Only the controller maps a
+  call to a new ToolRequest and sends it through the existing permission boundary.
+  Workspace lifecycle and authority writers are excluded from model tools.
+- The OpenAI API adapter uses stateless requests (`store=False`), bounded output and elapsed time,
+  disabled input truncation and zero implicit retries. Opaque encrypted reasoning items
+  are validated against the visible message and replayed for multi-turn tool use.
+  One call's success means a model draft was received, never that a task is VERIFIED.
+- Errors distinguish configuration/authentication/permission, bad requests, rate limits,
+  service/transport failures, timeouts, invalid output, refusal and incomplete output.
+  Retry hints do not authorize a retry. Unknown usage or remote outcome stays unknown;
+  local cancellation cannot prove the server did not process or charge a request.
+- Controller model networking is distinct from the task tool sandbox's network permission.
+  No model request authorizes arbitrary network access through shell/tools.
+  Full context integration, cumulative resource budgets and planning logic remain later phases;
+  the initial local Codex bridge is the explicitly authorized exception in Section 32.1.
 
-V1 only needs one implementation.
+Offline tests use FakeModelProvider and mocked SDK HTTP transport. A separately opted-in
+smoke performs at most three real calls (1,024 output tokens and 30 seconds each), including
+structured output and a Tool Runtime read round trip. Missing credentials, skipped smoke
+or offline success cannot establish live provider acceptance.
+
+## 32.1 Local Coding Engine Adapters
+
+The user-authorized extension separates model inference from coding execution.
+Keep the Python/Pydantic/asyncio controller for workflow, permissions, evidence and
+QualityGate. Reuse an external engine's coding loop through the existing Coder
+protocol; do not introduce another agent framework or a parallel state authority.
+
+The first implementation is CodexCoder in executors/codex.py. Claude Code and Pi
+remain planned, not implemented. Their adapters must establish equivalent enforcement
+and recording before coding can be supported. P06/P07 context construction and the
+complete P08 application/CLI integration remain required.
+
+The bridge uses the installed native Codex App Server with JSONL stdio. The experimental
+contract is pinned to CLI 0.154.0-alpha.6.2: environments=[] at thread and turn creation,
+an ephemeral thread, no runtime workspace roots or discovered instructions, and the
+runtime's five project tools as client-handled dynamic tools. A capability mismatch,
+unknown server request, unbridged native-action event, foreign identity, duplicate call,
+malformed arguments or invalid final schema stops execution.
+
+A dedicated controller-selected CODEX_HOME outside the project and authoritative journal
+holds fixed adapter configuration and native Codex login. Never overwrite another
+configuration, copy the user's global profile, or expose credentials through context.
+The CLI's own authentication/cache data is not verification evidence. Per-profile exclusive
+ownership prevents concurrent adapter instances; an orphan lock requires inspection,
+not blind recovery. The native executable is a trusted controller dependency,
+not an untrusted model-selected command. Its path must also be outside the project
+and authoritative journal so project edits cannot replace the next attempt's executor.
+
+Each bridge segment implements ModelProvider internally to reuse ModelRuntime:
+persist model_requested, wait for a dynamic-tool request, persist model_finished, then
+execute via ToolRuntime. Persist the next model_requested before returning the actual
+ToolResult to Codex. The process waits at this boundary; no nested journal operations
+or concurrent writer are introduced. Notifications preceding turn/start's response
+are buffered until the returned thread/turn identity can be checked. A tool denial or
+approval requirement blocks Coder; the adapter never grants approval itself.
+
+Windows launches a hidden native executable and uses a Job to bound lifetime and prevent
+child processes. POSIX launches a separate process group for cleanup. These are lifecycle
+controls, not filesystem/network isolation. Model-triggered project operations continue
+to use P03 enforcement; unsupported tool permissions remain denied. Cancellation awaits
+cleanup; failed recording stops further dispatch and preserves actual modifications.
+
+The default attempt permits at most 20 runtime tool calls and 60 seconds (configuration
+ceilings 100 calls / 300 seconds, also limited by RunSpec.worker_timeout_seconds),
+plus bounded process cleanup. RPC lines are limited to 2 MiB, each stream to 32 MiB,
+and incoming envelopes to 10,000. Codex's internal finite transport retries remain within
+the total deadline; a bridge record does not imply exactly one HTTP request.
+No enforceable per-call token cap is exposed here: GenerationSettings.max_output_tokens
+may be null for this bridge, while OpenAIProvider rejects null. Report cumulative Codex
+token usage once at the final result; intermediate segments have unknown usage.
+Unknown remote consumption after interruption is not zero.
+
+Only validated CoderResult drafts leave the adapter. Runtime diffs, exit codes and
+tool records remain execution facts; model drafts cannot certify VERIFIED.
+Fake-protocol tests and real Codex processes connected to a loopback synthetic model
+are offline checks. Native account/model access and macOS execution need separate live
+acceptance. A new CLI version requires capability/conformance validation before it is
+added; there is no unrestricted CLI fallback.
+
+Official references checked 2026-09-16:
+[Codex App Server](https://learn.chatgpt.com/docs/app-server),
+[Codex configuration](https://learn.chatgpt.com/docs/config-file/config-reference).
+The exact environment/dynamic-tool fields were also checked against schemas generated
+by the pinned local CLI; documentation alone does not establish this repository's
+enforcement or account compatibility.
 
 ---
 
@@ -2657,6 +2754,15 @@ PlanDraft
 ReviewResult
 ```
 
+Phase 5 validates the generic Pydantic schema interface against the existing
+RequirementContract and ReviewResult. PlanDraft's concrete model and compilation
+rules are introduced in Phase 7 and must use this same validated boundary; Phase 5
+does not pre-implement the planner. This resolves the original Phase 5/7 ordering
+ambiguity without treating a generic fixture as a completed PlanDraft implementation.
+Live provider acceptance remains required separately from offline tests.
+The local adapter extension in Section 32.1 is developed alongside P05 by explicit user
+authorization; remaining P06/P07 dependencies and P08 integration checks are not waived.
+
 ---
 
 ## Phase 6 — Explorer and Project Initialization
@@ -2719,9 +2825,16 @@ Add the complexity metadata from Section 29 to PlanDraft/plan serialization in t
 
 ## Phase 8 — Coder
 
-Implement tool-calling coding loop.
+Prefer a validated external coding-engine adapter implementing Coder. Codex owns its
+coding loop; the controller bridges tools and enforces permissions, recording and budgets.
+Keep the API provider for roles needing direct inference; implement an in-house coding
+loop only when a concrete requirement justifies it.
 
-Initial loop:
+The initial Codex adapter was explicitly authorized ahead of P06/P07. Integrate their
+versioned knowledge and plan context before claiming Phase 8 complete. Claude Code/Pi
+require separate capability and live acceptance.
+
+Logical loop (the external engine may own the Model/Observation cycle):
 
 ```text
 TaskContext

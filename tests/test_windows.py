@@ -255,25 +255,72 @@ def test_windows_cancellation_reaps_process_and_cleans_profile(windows_harness, 
             _lowbox.close(handle)
 
 
-def test_windows_does_not_inherit_extra_handles(windows_harness, tmp_path):
+def test_windows_does_not_inherit_extra_handles(windows_harness, tmp_path, monkeypatch):
+    import _winapi
+    import ctypes
     import msvcrt
+
+    from coding_agent.runtime import _lowbox
 
     h = windows_harness
     private = tmp_path / "private-handle.txt"
     private.write_text("handle-secret")
+    original_create = _lowbox.create_process
+    parent = _winapi.GetCurrentProcess()
+    checked_children = []
+
+    def create(*args):
+        ok = original_create(*args)
+        if ok:
+            process = ctypes.cast(args[-1], ctypes.POINTER(_lowbox.ProcessInfo)).contents
+            # Inspect the suspended child's actual handle table from the controller.
+            # No child handle reuse or invalid-handle exception can distort the probe.
+            try:
+                duplicate = _winapi.DuplicateHandle(
+                    process.process, handle, parent, 0, False, _winapi.DUPLICATE_SAME_ACCESS
+                )
+            except OSError as error:
+                assert error.winerror == 6, error
+            else:
+                _winapi.CloseHandle(duplicate)
+                pytest.fail("private handle inherited")
+            checked_children.append(process.pid)
+        return ok
+
+    monkeypatch.setattr(_lowbox, "create_process", create)
     with private.open("rb") as stream:
         handle = msvcrt.get_osfhandle(stream.fileno())
         os.set_handle_inheritable(handle, True)
-        code = (
-            "import os,msvcrt; "
-            f"fd=msvcrt.open_osfhandle({handle},os.O_RDONLY); print(os.read(fd,100))"
-        )
         try:
-            result = h.call(Shell(argv=(h.python, "-c", code)), approve=True)
+            # Positive control: this exact handle is present and duplicable in the parent.
+            duplicate = _winapi.DuplicateHandle(
+                parent, handle, parent, 0, False, _winapi.DUPLICATE_SAME_ACCESS
+            )
+            _winapi.CloseHandle(duplicate)
+            result = h.call(Shell(argv=(h.python, "-c", "print('child ready')")), approve=True)
         finally:
             os.set_handle_inheritable(handle, False)
-    assert result.status == "failed" and result.exit_code != 0, result
-    assert "handle-secret" not in result.output
+    assert checked_children
+    assert result.status == "succeeded" and result.exit_code == 0, result
+    assert result.output.strip() == "child ready"
+    assert private.read_text() == "handle-secret"
+
+
+def test_windows_native_crash_exits_without_waiting_for_dialog(windows_harness):
+    import msvcrt
+
+    h = windows_harness
+    h.runtime.timeout = 15
+    parent_mode = msvcrt.GetErrorMode()
+    # Deliberately reproduce STATUS_INVALID_HANDLE in a disposable sandbox child.
+    # Without the job's exception policy, the dialog blocks until timeout or a click.
+    code = "import msvcrt; print('started', flush=True); msvcrt.open_osfhandle(0x12345678, 0)"
+    result = h.call(Shell(argv=(h.python, "-c", code)), approve=True)
+    assert result.status == "failed" and result.exit_code == 0xC0000008, result
+    assert result.output.strip() == "started"
+    assert msvcrt.GetErrorMode() == parent_mode
+    view = inspect_journal(h.journal.directory / "events.jsonl")
+    assert not view.unresolved
 
 
 def test_windows_preparation_deadline_prevents_launch(windows_harness, monkeypatch):

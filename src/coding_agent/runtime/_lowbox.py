@@ -289,7 +289,8 @@ class Lowbox:
             job = create_job(None, None)
             checked(job)
             limits = JobLimits()
-            limits.flags = 0x2000 | 0x8 | 0x100  # kill on close, one process, memory cap
+            # Kill on close, one process, memory cap, no unhandled-exception dialog.
+            limits.flags = 0x2000 | 0x8 | 0x100 | 0x400
             limits.active_processes = 1
             limits.process_memory = 512 * 1024 * 1024
             checked(set_job(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)))

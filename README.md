@@ -2,9 +2,10 @@
 
 按项目规范执行编码任务，以关联代码快照的证据判断完成状态。
 
-当前实现 P01 领域基础、P02 串行工作流、P03 工具运行时及 P04 会话工作区：
-包含 QualityGate、有限修复、受控文件/进程工具、持久事件、真实源码快照及 Worktree。
-尚未实现真实 Agent、CLI、真实验证 Evidence 或最终交付；平台复验状态见开发计划。
+当前实现 P01 领域基础、P02 串行工作流、P03 工具运行时、P04 会话工作区及 P05 模型适配：
+包含 QualityGate、有限修复、受控工具、持久事件、真实源码快照、Worktree 和 OpenAI Responses 适配。
+P05 已通过离线模拟测试，另有实验性 CodexCoder 接入本地 Codex 编码循环；真实账号/API 冒烟待完成。
+尚未完成项目知识/计划上下文集成、产品 CLI、真实验证 Evidence 或最终交付；平台复验状态见开发计划。
 
 ## 开发环境
 
@@ -130,6 +131,7 @@ python3 -m venv .venv
   仓库输入及受信工具链，对执行副本只授予读取/执行权限，不修改原目录 ACL。禁止联网和
   创建子进程，限制进程内存 512 MiB，禁用 Win32k 系统调用，只继承标准输入/输出句柄。
   Windows 自身的必要系统资源仍由 LPAC 能力控制；这不等同于完整虚拟机。
+  Job 中的未处理原生异常直接退出并保留错误码，不等待崩溃弹窗确认。
 - Windows 会提供该次 AppContainer 私有可写存储；正常结束、失败、超时和取消都清理
   profile 与执行副本。原仓库、控制记录及宿主用户文件不授予访问。机器断电后的孤儿
   profile/副本核对和清理仍属 P12，不能声称已具备崩溃恢复。
@@ -212,3 +214,138 @@ restored = await runtime.workspace_operation(
   部分创建或结果丢失后保留现场，跨重启恢复与归档回收属于 P12。
 - 当前 Windows 已进行真实 Worktree 与 LPAC 集成验证；macOS/POSIX 实机复验待完成。
   详见 [P04 回归](tests/test_workspace.py) 与 [阶段开发记录](DEV_PLAN.md)。
+
+## P05 模型适配
+
+- `core/provider.py` 定义供应商无关的 Message、ToolSchema、ModelResponse、TokenUsage、
+  ProviderError 和 ModelProvider。结构化结果是待处理的数据，不能改变任务状态或生成成功 Evidence。
+- `providers.openai.OpenAIProvider` 使用固定版本的官方 SDK（openai 3.14.1），连接
+  OpenAI Responses API。模型必须通过 `GenerationSettings(model=...)` 明确指定；
+  API key 从 `OPENAI_API_KEY` 或构造参数 `SecretStr` 注入。当前不使用 `OPENAI_BASE_URL`，
+  不实现其他 Provider 或兼容服务。通过 `async with OpenAIProvider(settings)` 管理连接。
+- 应用层使用 `providers.runtime.ModelRuntime(provider, journal=..., read_revision=..., task_id=...)`，
+  调用 `await runtime.generate(messages, tools=..., response_schema=...)`。messages/tools 使用 tuple。
+  请求与工具共用 JSONL 顺序和排他调用边界；请求先落盘，失败则不访问 API。
+  记录配置、上下文指纹、实际返回模型/响应 ID、用量和脱敏后的可见输出；不保存完整输入或推理续接数据。
+  结果写入失败会阻止后续模型及工具调用；待核实请求由 `inspect_journal` 返回。
+- 输出 schema 使用拒绝未知字段的 Pydantic 对象模型；返回后再次做严格解析。
+  RequirementContract、ReviewResult 已有离线覆盖；PlanDraft 在 P07 定义后接入同一接口。
+  未声明的工具、参数错误、重复 call ID、孤立或遗漏的工具结果、拒答和不完整响应均不能当作成功结果。
+- `runtime_tools()` 仅暴露 read/search/patch/shell/git 的请求结构。
+  控制器用 `tool_request(call, local_request_id)` 转换后交给 ToolRuntime；
+  `tool_output(call, request, result)` 将实际结果关联到供应商 call ID。
+  模型不持有工具执行器、审批权或工作区生命周期接口，现阶段也没有自动 Agent 循环。
+- API 使用 `store=False`，不截断输入，关闭 SDK 自动重试及并行工具调用。
+  推理模型的加密续接数据由适配器封装、检查并在下一轮回传，业务代码不解析供应商输出项。
+  最多 1,000 条消息、32 个工具定义，上下文消息/响应各限 2 MiB；
+  默认输出上限 2,048 tokens、超时 60 秒，可显式配置，最大为 65,536 tokens / 300 秒。
+- 错误区分配置、认证、权限、请求、限流、服务、传输、超时、结构错误、拒答和不完整响应。
+  retryable 与 retry-after 仅供后续控制器决策，不自动发起重试；记录 API 实际提供的输入、
+  输出、缓存及推理 token 数。没有 usage 时保持未知，不编造零消耗或估算费用。
+  本地取消会向上传播 CancelledError 并记录 interrupted，不能据此断言服务端没有执行或计费。
+- 模型 API 是受信控制器按配置发出的独立网络请求；任务的 `network: false` 仍约束工具沙箱。
+  模型不能通过工具任意联网或读取控制器凭据。P06/P08 后续负责选择任务上下文和循环预算。
+
+### 真实 API 冒烟
+
+先在本机环境安全配置 `OPENAI_API_KEY` 和支持 Responses、Structured Outputs、function calling
+的 `OPENAI_MODEL`，不把密钥写进源码或命令示例。显式启用：
+
+```powershell
+$env:CODING_AGENT_LIVE_SMOKE = "1"
+.\.venv\Scripts\python.exe -m pytest tests/test_provider_live.py -q -s -rs
+Remove-Item Env:CODING_AGENT_LIVE_SMOKE
+```
+
+macOS / Linux 在已配置 key/model 的环境执行：
+
+```bash
+CODING_AGENT_LIVE_SMOKE=1 .venv/bin/python -m pytest tests/test_provider_live.py -q -s -rs
+```
+
+最多 3 次请求，每次输出上限 1,024 tokens、超时 30 秒且无自动重试；
+仅发送固定提示和临时目录中的合成文件内容。检查结构化输出及一次真实工具读取往返，
+输出实际模型/用量和临时记录目录。默认测试跳过此项；显式启用但缺少配置会失败。
+跳过、超时或输出不完整都不代表真实接入通过。
+
+接口依据：[Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs)、
+[Function Calling](https://developers.openai.com/api/docs/guides/function-calling) 和
+[Responses Python reference](https://developers.openai.com/api/reference/python/resources/responses/methods/create)
+（2026-09-16 核对；真实服务兼容性仍需上述冒烟确认）。
+
+
+## 本地 coding 引擎 adapter
+
+工作流、权限、证据和 QualityGate 使用本项目的 Python/Pydantic/asyncio 实现；
+编码循环优先复用本地引擎。目前提供 [CodexCoder](src/coding_agent/executors/codex.py)，
+实现既有 Coder 接口。Claude Code、Pi 尚未实现，也未引入新的 Agent 框架。
+
+| 路径 | 用途 | 当前验证 |
+| --- | --- | --- |
+| OpenAIProvider + ModelRuntime | 直接模型推理、结构化输出 | 模拟 HTTP 通过；真实 API 待验证 |
+| CodexCoder | 本地 Codex 编码循环 | Windows 真实 CLI + 本地假模型通过；真实账号、macOS 待验证 |
+| Claude Code / Pi adapter | 后续替换编码引擎 | 规划中 |
+
+首版只支持原生 Codex CLI **0.154.0-alpha.6.2**；协议使用实验性接口，其他版本拒绝执行。
+Windows 需真正的 codex.exe，不能使用 .cmd/.bat 包装器。运行时关闭 Codex 原生环境访问，
+通过动态工具将项目读写、命令和 Git 交给 Tool Runtime；模型不能写任务状态或 Evidence。
+Windows Job/POSIX 进程组用于管理生命周期，工具沙箱仍由 P03 后端负责。
+
+### 应用内接入
+
+调用方先准备经过批准的 ToolRuntime，再将 adapter 作为 Coder 传给工作流：
+
+```python
+from pathlib import Path
+from coding_agent.executors.codex import CodexCoder, CodexSettings
+
+coder = CodexCoder(
+    CodexSettings(
+        executable=Path(native_codex_path).resolve(),
+        home=Path(dedicated_codex_home).resolve(),
+        model=selected_model,
+        timeout_seconds=60,
+        max_tool_calls=20,
+    ),
+    runtime=approved_tool_runtime,
+)
+```
+
+executable 与 home 都必须在项目和权威日志目录之外，避免被任务工具改写。
+home 使用专用目录；首次调用写入固定配置，
+遇到其他配置会拒绝覆盖。先在独立终端把 CODEX_HOME 指向这个专用目录，再运行
+codex -c cli_auth_credentials_store=file login，确保使用 adapter 对应的文件凭据存储；
+登录与刷新由 Codex 管理。不会自动使用或复制日常全局配置、插件和凭据。
+遗留的 .verified-runtime.lock 需先核对进程和日志再处理，不能删锁后盲目重跑。
+
+默认每次尝试最多 20 次 runtime 工具操作、60 秒，且受工作流时限约束；
+取消后等待进程清理。CLI 内部可能有有限传输重试，一条模型记录不等于一次 HTTP 请求。
+此协议未提供可强制的单次输出 token 上限，对应记录为 null；最终累计用量来自 Codex，
+中间段与未报告的用量保持未知。OpenAI API 路径仍要求明确输出上限。
+
+### 验证
+
+无需账号的协议/权限测试：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_codex.py -q
+```
+
+安装兼容的原生 CLI 后，测试让真实 Codex 连接本机假模型；未安装 CLI 时只跳过对应集成测试。
+这与真实账号调用分开统计。
+
+真实冒烟需先在专用目录完成登录，并安全配置 CODING_AGENT_CODEX_HOME、
+CODING_AGENT_CODEX_MODEL，然后显式开启：
+
+```powershell
+$env:CODING_AGENT_CODEX_LIVE = "1"
+.\.venv\Scripts\python.exe -m pytest tests/test_codex_live.py -q -s -rs
+Remove-Item Env:CODING_AGENT_CODEX_LIVE
+```
+
+冒烟只操作临时合成文件，最多 4 次 runtime 工具调用、60 秒，没有可承诺的硬 token 上限。
+缺少配置时显式失败；默认跳过不计为通过。当前只完成离线验证，P05/P08 均未标记 DONE。
+
+协议依据：[Codex App Server](https://learn.chatgpt.com/docs/app-server)、
+[配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)；
+另核对了本机 CLI 导出的 schema。实施范围和验收记录见 [开发计划](DEV_PLAN.md)。
