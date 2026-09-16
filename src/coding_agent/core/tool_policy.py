@@ -1,5 +1,6 @@
 """Pure capability policy. Paths are resolved again by the concrete filesystem tool."""
 
+from .knowledge import InitializationOperation
 from .models import TaskSpec
 from .paths import CONTROL_NAMES as CONTROL_NAMES
 from .paths import glob_matches as glob_matches
@@ -21,6 +22,10 @@ class PolicyEngine:
         workspace_controller: bool = False,
     ) -> PolicyDecision:
         invocation = request.invocation
+        if isinstance(invocation, InitializationOperation):
+            return PolicyDecision(
+                decision=Decision.DENY, reason="initialization is controller-only"
+            )
         if not plan_authorized:
             return PolicyDecision(
                 decision=Decision.DENY, reason="matching plan authorization required"

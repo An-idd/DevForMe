@@ -22,6 +22,13 @@ def open_directory(path: Path) -> int:
     return os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 
 
+def mkdir_at(parent: int, name: str) -> None:
+    if sys.platform == "win32":
+        (_winfiles.fd_path(parent) / name).mkdir(mode=0o700)
+    else:
+        os.mkdir(name, 0o700, dir_fd=parent)
+
+
 def directory_at(parent: int, name: str) -> int:
     if sys.platform == "win32":
         return open_directory(_winfiles.fd_path(parent) / name)

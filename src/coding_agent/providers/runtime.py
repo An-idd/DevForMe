@@ -1,11 +1,13 @@
 """Persist each model attempt before network dispatch; never retry implicitly."""
 
 import asyncio
+from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from pydantic import BaseModel
 
+from ..core.knowledge import InitializationRevision
 from ..core.provider import (
     GenerationSettings,
     Message,
@@ -20,7 +22,7 @@ from ..core.provider import (
     validate_output,
 )
 from ..core.tools import ArtifactRef
-from ..core.workflow import RevisionReader, WorkflowEvent
+from ..core.workflow import Revision, WorkflowEvent
 from ..session.records import JsonlJournal
 
 
@@ -36,7 +38,7 @@ class ModelRuntime:
         provider: ModelProvider,
         *,
         journal: JsonlJournal,
-        read_revision: RevisionReader,
+        read_revision: Callable[[], Revision | InitializationRevision],
         task_id: str | None = None,
     ) -> None:
         self._provider = provider

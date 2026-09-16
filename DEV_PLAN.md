@@ -1,8 +1,8 @@
 # Verified Coding Agent — 开发计划
 
-> 版本：V1 / 2026-09-16 / P05 与 Codex adapter 离线实现，真实冒烟待验证
+> 版本：V1 / 2026-09-16 / P06 初始化与 Windows 离线验证完成，真实冒烟待验证
 > 依据：[开发规格](CODING_AGENT_DEVELOPMENT_SPEC.md)，重点参考 §16、§24、§29–31、§35–39、§42、§44–48。
-> 当前状态：P01/P02 已完成；P03 安全修复与 Windows 适配已完成本机验证；macOS 集成复验待完成，状态为 IN_PROGRESS。用户明确授权继续 P04；P04 功能与 Windows 验收已完成，macOS 实机复验待完成，保持 IN_PROGRESS；用户明确授权继续 P05，模型适配已完成离线实现，真实 API 冒烟待验证，P05 保持 IN_PROGRESS；用户另行授权本地 coding adapter，P08 提前实现 Codex 接入基础，保持 IN_PROGRESS；P06/P07/P09–P12 尚未开始。
+> 当前状态：P01/P02 已完成；P03 安全修复与 Windows 适配已完成本机验证；macOS 集成复验待完成，状态为 IN_PROGRESS。用户明确授权继续 P04；P04 功能与 Windows 验收已完成，macOS 实机复验待完成，保持 IN_PROGRESS；用户明确授权继续 P05，模型适配已完成离线实现，真实 API 冒烟待验证，P05 保持 IN_PROGRESS；用户另行授权本地 coding adapter，P08 提前实现 Codex 接入基础，保持 IN_PROGRESS；用户授权继续 P06，初始化 CLI 与知识刷新已完成 Windows 离线验证，真实模型与 macOS/POSIX 复验待完成，保持 IN_PROGRESS；P07/P09–P12 尚未开始。
 
 ## 1. 目标与推进方式
 
@@ -27,7 +27,7 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 
 | 项目 | 开发约定 |
 | --- | --- |
-| 技术栈 | Python 3.12+、Pydantic v2、asyncio、Git CLI、subprocess；Windows 只读 Git 使用 Dulwich；CLI 阶段引入 Typer；检查使用 pytest、ruff、mypy |
+| 技术栈 | Python 3.12+、Pydantic v2、asyncio、Git CLI、subprocess；Windows 只读 Git 使用 Dulwich；P06 CLI 使用标准库 argparse；检查使用 pytest、ruff、mypy |
 | 源码布局 | 使用 `src/coding_agent/` 包；在包内保持规格要求的 core、agents、runtime、tools、verification、context、session 等职责边界 |
 | 建目录方式 | 当前阶段需要时再建立文件和目录，不预建规格 §33 的全部目录树 |
 | 执行方式 | V1 同时运行一个业务任务；不实现并行调度或远程 Worker |
@@ -65,7 +65,7 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 | P03 工具与执行记录 | P02 | PolicyEngine、Tool Runtime、持久事件、工件记录 | IN_PROGRESS |
 | P04 工作区 | P03 | Git 状态/差异/快照、Worktree、受控恢复与清理 | IN_PROGRESS |
 | P05 模型适配 | P04 | Provider 接口与一个真实实现 | IN_PROGRESS |
-| P06 Explorer / init | P05 | 项目梳理、用户规范、项目知识与增量刷新、初始化 CLI | NOT_STARTED |
+| P06 Explorer / init | P05 | 项目梳理、用户规范、项目知识与增量刷新、初始化 CLI | IN_PROGRESS |
 | P07 Planner | P06 | 复杂度评估、PlanDraft 校验/编译、版本化分阶段计划、规则引用、规划 CLI | NOT_STARTED |
 | P08 Coder | P07 | 引擎 adapter、受约束执行与留痕；当前仅提前实现 Codex 基础接入 | IN_PROGRESS |
 | P09 Verification | P08 | 测试/构建/静态检查、结果解析、版本化 Evidence | NOT_STARTED |
@@ -131,14 +131,20 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 
 ### P06 — Explorer 与项目初始化
 
-- [ ] 保持 Explorer 只读；输出 RepoSummary、重要模块/调用关系、验证命令及来源。
-- [ ] 针对当前任务补充范围、耦合、关键未知项和验证环境信息，为复杂度评估提供源码依据。
-- [ ] 区分代码事实、明确规则和未确认假设，收集用户补充的开发约定和模块交互约束。
-- [ ] 控制器保存 `.agent/project.md` 与修订元数据；复用已有 AGENTS.md 等资料。
-- [ ] 提供 `agent init`、`agent init --refresh` 和首次 plan/run 共用的初始化流程。
-- [ ] 刷新变动来源，保留用户内容；非交互场景遇到必要决策时返回可操作的说明。
+- [x] 保持 Explorer 只读；输出 RepoSummary、重要模块/调用关系、验证命令及来源。
+- [x] 针对当前任务补充范围、耦合、关键未知项和验证环境信息，为复杂度评估提供源码依据。
+- [x] 区分代码事实、明确规则和未确认假设，收集用户补充的开发约定和模块交互约束。
+- [x] 控制器保存 `.agent/project.md` 与修订元数据；复用已有 AGENTS.md 等资料。
+- [x] 提供 `agent init`、`agent init --refresh` 和首次 plan/run 共用的初始化流程。
+- [x] 刷新变动来源，保留用户内容；非交互场景遇到必要决策时返回可操作的说明。
+- [ ] 用真实模型验证代表性项目的模块解释、冲突/问题和来源质量。
+- [ ] 在 macOS/POSIX 实机复验初始化的文件、锁和发布故障路径。
 
 **验收：** 能解释代表性模块关系并指向源码；重复 init 不覆盖用户规则；来源变化可检测；未执行的验证命令没有“通过”记录；无需完整调用图即可完成初始化。
+
+**当前边界：** 离线模式提供有来源的代表性观察；可选 OpenAI 模型解释模块职责/关系，
+其行为通过 Fake 与 SDK mock 验证。首次 plan/run 共用 API 已提供，CLI 集成分别归 P07/P08。
+真实模型探索与 macOS/POSIX 初始化尚待实机验证，P06 保持 IN_PROGRESS。
 
 ### P07 — Planner 与可执行计划
 
@@ -748,11 +754,86 @@ STATUS_INVALID_HANDLE（0xC0000008）原生异常退出；旧断言仅要求非�
 不计为通过。本次不新增依赖、不推进阶段；真实模型/账号与 macOS 实机待办保持不变。
 随后用户授权将 P05、Codex adapter 与本次 Windows 弹窗修复一并提交；阶段状态及未验证项保持不变。
 
+### P06 开始（2026-09-16）
+
+用户在提交 2684e85 后要求继续，按下一执行单元推进 P06，保留 P03/P04/P05/P08 未验证项。
+工作区开工时干净。范围为只读 Explorer、有来源的 RepoSummary、知识修订/刷新与 init CLI；
+不实现 P07 Planner 或 P08 run 命令。复杂度 large、风险 high：控制资料保护、刷新一致性、
+模型输出来源与持久记录关联需要共同验证。
+
+实现约定：复用现有文件边界、JSONL 记录和 ModelRuntime；初始化记录使用明确的无计划修订，
+不伪造业务 TaskGraph 或验收通过。项目知识发布属于控制器工具操作，Agent 工具不能调用。
+project.json 只索引不可变修订、来源与指纹，用户规则保留在 project.md 和原有规范中；
+刷新遇到生成区人工编辑或不完整发布时停止并保留现场，不猜测覆盖。
+
+规格 §34 推荐的 Typer 暂不引入：当前 init/refresh 参数由 argparse 满足，后续 CLI 需求再评估。
+离线探索与模型辅助探索分别标注；命令发现不执行命令，不产生验证 Evidence。
+初次 plan/run 将复用本阶段 API，其 CLI 集成仍分别属于 P07/P08。
+
+### P06 实现与验证记录（2026-09-16）
+
+**实际交付：** [知识模型](src/coding_agent/core/knowledge.py)、
+[只读 Explorer](src/coding_agent/context/explorer.py)、
+[初始化控制器工具](src/coding_agent/tools/initialization.py)、
+[共享应用 API](src/coding_agent/application/initialization.py)、
+[CLI](src/coding_agent/cli.py) 与 [回归测试](tests/test_initialization.py)。
+新增标准库 argparse 命令入口，无新增依赖；README 与规格 §16.5/§34 同步实际边界。
+
+- 离线识别代表性源码、规范、配置、模块声明、导入/调用文本和验证命令；
+  模型辅助扩充模块职责、耦合与假设，来源路径/行范围/引文必须能在已读输入中核对。
+  规则只能逐字引用规范或用户来源，嵌套规范保留作用域。完整调用图和真实模型质量不计为已验证。
+- 支持 init、refresh、rule、focus、forbid、JSON 输出。保留生成区外的用户内容，
+  兼容 CRLF；未变化修订直接复用，过期输入返回 stale，历史修订保留。
+  刷新保留来源未变的模型条目和命令；必要问题不因模型省略或 required 降级而消失。
+  模型须引用明确用户/规范答案解除阻塞；答案来源变化会重新打开问题，离线模式不判断答案语义。
+- project.json 仅为当前修订索引；knowledge-<revision>.json 保存结构化摘要、来源摘录与指纹。
+  摘录先脱敏再存储/送模型，原始文件指纹用于过期检测；未读内容和截断部分不宣称已理解。
+  发现现有 Sanitizer 未覆盖带引号的 JSON 凭据赋值，在共享入口修复并保持 JSON 语法有效。
+- 控制器工具先写请求、再探索或发布、最后记录结果；无计划初始化修订不能产生任务状态或 Evidence。
+  .agent/锁/初始日志建立是记录系统自身的 bootstrap，Agent 工具无权调用知识发布。
+  发布前核对源码与用户输入，比较预期文件内容；异常保留旧修订/用户修改。
+  未知结果保留锁，生成区/元数据冲突明确拒绝；P12 自动恢复没有提前实现。
+- 限制与可见缺口：10,000 项目录枚举、默认 12/最多 24 来源、单文件读取 1 MiB、
+  每摘录 32 KiB、总摘录 192 KiB。超大规范拒绝截断；需针对任务使用 focus 补充未读源码。
+  当前每次 init 仍枚举可见文件并读取有界来源，增量复用的是知识条目，没有新增缓存/监听框架。
+
+**过程中的失败及处理：**
+
+- 两文件发布故障测试最初只改函数返回值，生成文本未变，旧元数据仍与旧/新相同文本一致；
+  改为修改被引用的声明，真实覆盖生成区改变而索引未提交的异常，不放宽拒绝规则。
+- CRLF 编辑导致生成区校验误报：仅对生成区换行规范化比较，用户区保持原文；
+  增加回归，同时保留真正生成区改写的拒绝行为。
+- pip install -e . --no-deps --no-build-isolation 因虚拟环境缺少 setuptools 构建后端失败；
+  改用声明的隔离构建 pip install -e . --no-deps 后成功，未增加项目依赖。
+- 仓库副本冒烟脚本最初用 Windows 默认 GBK 读取 UTF-8 JSON，检查脚本失败；
+  显式 UTF-8 后完成四步验证。格式检查曾在格式化完成前启动，报告未格式化；
+  串行完成格式化后重新检查通过。
+
+**验证环境：** Windows / PowerShell，Python 3.12.14，项目虚拟环境。
+
+| 检查 | 实际结果 |
+| --- | --- |
+| 初始化专项（含必要问题答案/失效回归） | 51 passed，25.04 秒；后续命令保留调整已纳入最终完整回归 |
+| 初轮完整 pytest | 719 passed、23 skipped，417.35 秒；其后新增必要问题回归，不作为最终代码检查结果 |
+| 最终完整 pytest | 721 passed、23 skipped，381.12 秒 |
+| Ruff / format | All checks passed；64 files already formatted |
+| mypy | Windows / Darwin 各 46 个源文件通过；Darwin 目标检查不代表实机验证 |
+| 安装及依赖 | editable 安装、agent init --help、pip check 通过 |
+| 已安装 CLI 的仓库副本冒烟 | initialized → reused → stale（退出 2）→ refreshed；51 个文件、12 个仓库来源及用户来源，74 个条目、5 个发现命令；用户区保留 |
+| 差异/文档 | git diff --check、UTF-8、代码块配对及本地文档链接检查通过 |
+
+**未完成/未验证：** P06 真实模型探索与 macOS/POSIX 实机初始化；P03/P04 的 macOS 复验、
+P05 API 和 P08 Codex 账号冒烟继续保留。23 项跳过分别为 18 项 macOS 集成、3 项 POSIX、
+2 项真实 API/账号，均不计为通过。P06 保持 IN_PROGRESS。P07/P08 将实际接入共享初始化 API，
+Planner/run CLI、Verification 和自动恢复尚未实现。用户随后授权提交本次 P06 实现、测试及文档；
+阶段状态与未验证项保持不变，未授权推送。
+
 ## 9. 下一步执行单元
 
-1. 在专用 CODEX_HOME 登录，配置 CODING_AGENT_CODEX_HOME / CODING_AGENT_CODEX_MODEL，
+1. P06 真实探索需在代表性项目上显式运行 agent init PATH --refresh --model MODEL 并核查来源质量。
+   在专用 CODEX_HOME 登录，配置 CODING_AGENT_CODEX_HOME / CODING_AGENT_CODEX_MODEL，
    显式执行 Codex 真实冒烟；OpenAI API 冒烟仍需 OPENAI_API_KEY / OPENAI_MODEL。
    两条路径分别记录，缺少配置或跳过均不计为通过。
-2. 在 macOS/POSIX 复验 P03/P04、共享记录与 Codex 进程管理，保留未验证项。
-3. 后续按依赖推进 P06 Explorer/init 与 P07 计划/知识上下文，再完成 P08 应用流程。
+2. 在 macOS/POSIX 复验 P03/P04、共享记录、Codex 进程管理及 P06 初始化，保留未验证项。
+3. P06 验收后，下一实现阶段为 P07 计划/知识上下文，再完成 P08 应用流程。
    Claude Code、Pi 需要先证明相同工具边界和留痕能力，不能直接开启不受控的原生工具。

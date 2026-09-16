@@ -14,6 +14,9 @@ dependencies = [
     "dulwich==1.2.14; sys_platform == 'win32'",
 ]
 
+[project.scripts]
+agent = "coding_agent.cli:main"
+
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "ruff>=0.11,<1", "mypy>=1.15,<2"]
 

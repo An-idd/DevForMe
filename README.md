@@ -2,10 +2,12 @@
 
 按项目规范执行编码任务，以关联代码快照的证据判断完成状态。
 
-当前实现 P01 领域基础、P02 串行工作流、P03 工具运行时、P04 会话工作区及 P05 模型适配：
-包含 QualityGate、有限修复、受控工具、持久事件、真实源码快照、Worktree 和 OpenAI Responses 适配。
-P05 已通过离线模拟测试，另有实验性 CodexCoder 接入本地 Codex 编码循环；真实账号/API 冒烟待完成。
-尚未完成项目知识/计划上下文集成、产品 CLI、真实验证 Evidence 或最终交付；平台复验状态见开发计划。
+当前实现 P01 领域基础、P02 串行工作流、P03 工具运行时、P04 会话工作区、
+P05 模型适配及 P06 项目初始化 CLI。包含 QualityGate、有限修复、受控工具、持久事件、
+源码快照、Worktree、OpenAI Responses 适配和有来源的项目知识。
+P05/P06 模型行为通过离线模拟测试，另有实验性 CodexCoder 接入本地 Codex 编码循环；
+真实账号/API 冒烟待完成。plan/run CLI、计划上下文集成、真实验证 Evidence 与最终交付
+尚未实现；跨平台复验及阶段状态见开发计划。
 
 ## 开发环境
 
@@ -37,6 +39,58 @@ python3 -m venv .venv
 ```
 
 实际验证平台及版本见开发计划；命令示例不代表所有平台均已验证。
+
+## P06 项目初始化
+
+安装后使用虚拟环境的 `agent` 命令；也可用 `python -m coding_agent`：
+
+```powershell
+.\.venv\Scripts\agent.exe init 'D:\Projects\Example'
+.\.venv\Scripts\agent.exe init 'D:\Projects\Example' --refresh
+.\.venv\Scripts\agent.exe init 'D:\Projects\Example' --rule '新增库存写入必须经过 InventoryService。'
+.\.venv\Scripts\agent.exe init 'D:\Projects\Example' --refresh --focus src/service.py --json
+```
+
+默认离线读取已有 AGENTS.md、CONTRIBUTING.md、配置和代表性源码；记录事实、明确规则、
+假设、源码引用、验证命令与覆盖缺口。嵌套规范保留目录作用域。`--focus` 指定文件/目录，
+`--forbid 'private/**'` 排除路径，均可重复。刷新时应沿用原来的 focus/forbid；
+改变参数会改变探索范围。命令发现不会安装依赖、执行仓库程序或生成通过证据。
+
+如需模型解释模块职责和调用关系，显式配置 `OPENAI_API_KEY`，使用
+`agent init PATH --refresh --model MODEL`。该选项经现有 OpenAI Provider 发起一次调用，
+无执行工具，输出上限 8192 tokens、超时 60 秒；费用和限额由账号配置决定。
+本地 Codex adapter 尚未接入 Explorer，真实 API 的初始化效果尚未验证。
+
+产物均在目标仓库 `.agent/`：
+
+- `project.md`：生成摘要与用户补充。编辑内容放在
+  `<!-- coding-agent:generated:start -->` / `<!-- coding-agent:generated:end -->` 标记之外。
+  已有无标记的 project.md 会作为用户内容保留；支持 Windows CRLF。
+- `project.json`：当前修订及来源指纹索引，不作为另一份可编辑规则。
+- `knowledge-<revision>.json`：不可变历史修订，保存结构化摘要、来源引用和脱敏后的源码摘录。
+  指纹对应原始文件；摘录可能截断，不能用摘录重建整个仓库。
+- `init-<id>/events.jsonl`：探索、模型调用和发布的请求/结果；失败或未知结果保留。
+  `init.lock` 防止并发初始化，结果未落盘时保留锁以供核查。
+
+重复初始化复用原修订；来源或用户内容变化时返回 `stale`，需明确 `--refresh`。
+刷新保留用户区和来源未变的知识，发布前重查输入。生成区人工改写、元数据不一致或
+发布中断时会拒绝覆盖，并提示检查日志和历史修订；自动恢复留待 P12。
+有必要问题时返回 `blocked`：在规范或 `--rule` 中补充答案，再通过模型刷新重评估。
+模型须保留问题身份，并逐字引用规范或用户来源中的答案；省略问题或降低 required 标志
+不能清除阻塞。答案来源变化会重新打开问题。离线刷新保留这些问题，不自行判断答案语义。
+`stale`、`blocked` 和错误的退出码为 2，成功为 0，中断为 130。
+
+当前探索是有界文本分析：最多枚举 10,000 项，默认选取 12 个来源；
+既有来源、明确 focus 和规范可扩展到 24 个。每文件最多读取 1 MiB，
+每仓库来源保留 32 KiB 摘录，总仓库摘录预算 192 KiB，用户补充另限 32 KiB；
+超大规范拒绝初始化，普通源码截断会标注。
+默认排除控制目录、常见依赖/生成物及凭据路径，并脱敏已知秘密和常见凭据格式；
+额外敏感目录应通过 `--forbid` 排除。源码关系只表示代表性观察，不是完整调用图。
+未读文件的内容变化不构成已读来源的变化，任务涉及它时必须通过 focus 补充探索。
+
+应用入口为 `await coding_agent.application.initialize(Path(...), ...)`；
+返回状态、知识修订、变化来源、问题与日志位置，供 P07/P08 的首次 plan/run 流程复用。
+初始化修订没有计划版本，不能作为任务 VERIFIED 或 P04 全工作区快照使用。
 
 ## 领域边界
 

@@ -4,6 +4,7 @@ from typing import Literal, Protocol, Self
 
 from pydantic import AwareDatetime, model_validator
 
+from ..knowledge import InitializationOperation, InitializationRevision
 from ..models import DomainModel, Identifier, NonEmptyStr, PositiveInt
 from ..provider import ModelCallRequest, ModelCallResult
 from ..state import TaskState, validate_transition
@@ -17,7 +18,7 @@ class WorkflowEvent(DomainModel):
     timestamp: AwareDatetime
     session_id: Identifier
     task_id: Identifier | None
-    revision: Revision
+    revision: Revision | InitializationRevision
     kind: Literal[
         "session_started",
         "plan_accepted",
@@ -52,6 +53,20 @@ class WorkflowEvent(DomainModel):
 
     @model_validator(mode="after")
     def validate_state_event(self) -> Self:
+        if isinstance(self.revision, InitializationRevision):
+            if self.kind not in {
+                "tool_requested",
+                "tool_finished",
+                "model_requested",
+                "model_finished",
+            }:
+                raise ValueError("pre-plan initialization cannot emit workflow outcomes")
+            if self.task_id is not None or self.evidence_ids:
+                raise ValueError("initialization has no business task identity or evidence")
+            if self.tool_request is not None and not isinstance(
+                self.tool_request.invocation, InitializationOperation
+            ):
+                raise ValueError("initialization records only controller operations")
         if self.kind == "task_state_changed":
             if self.task_id is None or self.previous_state is None or self.state is None:
                 raise ValueError("state events require task identity and both transition endpoints")
@@ -70,7 +85,11 @@ class WorkflowEvent(DomainModel):
             raise ValueError("request payload belongs only to tool_requested")
         if (self.tool_result is not None) != (self.kind == "tool_finished"):
             raise ValueError("result payload belongs only to tool_finished")
-        if self.kind in {"tool_requested", "tool_finished"} and self.task_id is None:
+        if (
+            self.kind in {"tool_requested", "tool_finished"}
+            and self.task_id is None
+            and not isinstance(self.revision, InitializationRevision)
+        ):
             raise ValueError("tool events require task identity")
         if (self.model_request is not None) != (self.kind == "model_requested"):
             raise ValueError("model request belongs only to model_requested")

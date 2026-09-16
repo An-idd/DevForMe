@@ -201,3 +201,12 @@ def test_git_inventory_and_diff_share_one_timeout(git_runtime, monkeypatch):
     with pytest.raises(TimeoutError):
         asyncio.run(runtime._run_git(Git(operation="diff")))
     assert runtime.backend.run.await_count == 1
+
+
+@pytest.mark.parametrize("secret", ["with spaces, punctuation", 'embedded "quotes"', "back\\slash"])
+def test_json_credential_assignments_are_redacted_without_corrupting_syntax(secret):
+    import json
+
+    source = json.dumps({"api_key": secret, "password": secret, "normal": "keep"})
+    result = json.loads(Sanitizer().text(source))
+    assert result == {"api_key": "[REDACTED]", "password": "[REDACTED]", "normal": "keep"}

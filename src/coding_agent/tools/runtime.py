@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
 
+from ..core.knowledge import InitializationOperation
 from ..core.tool_policy import PolicyEngine, path_permitted, relative_parts
 from ..core.tools import (
     ArtifactRef,
@@ -239,6 +240,8 @@ class ToolRuntime:
                         timeout=self.timeout,
                     )
                     self._sync_workspace()
+                elif isinstance(invocation, InitializationOperation):
+                    raise ValueError("initialization is controller-only")
                 elif isinstance(invocation, Git) and self.workspace is not None:
                     executed = True
                     output = (

@@ -6,6 +6,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import AwareDatetime, Field, StrictBool, model_validator
 
+from .knowledge import InitializationOperation
 from .models import Command, DomainModel, Identifier, NonEmptyStr
 from .workspace import WorkspaceOperation
 
@@ -45,7 +46,8 @@ class Git(DomainModel):
 
 
 Invocation = Annotated[
-    Read | Search | Patch | Shell | Git | WorkspaceOperation, Field(discriminator="kind")
+    Read | Search | Patch | Shell | Git | WorkspaceOperation | InitializationOperation,
+    Field(discriminator="kind"),
 ]
 
 

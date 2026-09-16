@@ -26,9 +26,16 @@ class Sanitizer:
         for secret in self._secrets:
             value = value.replace(secret, "[REDACTED]")
         value = re.sub(r"(?i)(bearer\s+)[\w.+/=-]+", r"\1[REDACTED]", value)
+
+        def redact_assignment(match: re.Match[str]) -> str:
+            token = match[2]
+            quote = token[0] if token.startswith(("'", '"')) else ""
+            return match[1] + quote + "[REDACTED]" + quote
+
         value = re.sub(
-            r"(?i)((?:api[_-]?key|password|secret|access[_-]?token)\s*[=:]\s*)[^\s,;]+",
-            r"\1[REDACTED]",
+            r"""(?i)((?:api[_-]?key|password|secret|access[_-]?token)["']?\s*[=:]\s*)"""
+            r"""("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;"']+)""",
+            redact_assignment,
             value,
         )
         return value

@@ -1186,7 +1186,7 @@ Repository intelligence should remain deterministic whenever possible.
 
 ## 16.1 Project Initialization (`agent init`)
 
-Initialization creates a reusable project knowledge baseline with LLM-assisted exploration and user input. It is a V1 capability.
+Initialization creates a reusable project knowledge baseline with deterministic discovery, optional LLM-assisted exploration, and user input. P06 defaults to offline discovery; model assistance is explicitly enabled. It is a V1 capability.
 
 ```text
 Read Existing Project Instructions and Documentation
@@ -1261,6 +1261,81 @@ During execution:
 At completion, Reviewer checks whether the implementation followed the applicable rules and whether relevant documentation needs updating. Record documentation updates or the conclusion that none were required. Proposals to change explicit rules must be distinguished from factual documentation maintenance and follow the applicable approval policy.
 
 Reuse unaffected knowledge. Do not rescan the entire repository after every task or treat an old initialization summary as a substitute for current source evidence.
+
+## 16.5 P06 concrete initialization boundary
+
+`application.initialize(root, refresh=False, rules=(), focus=(), scope=None,
+provider=None, secrets=())` is the shared asynchronous entry point. The argparse
+CLI exposes `agent init [path]`, `--refresh`, repeatable `--rule`, `--focus`,
+`--forbid`, `--json`, and opt-in `--model MODEL`. Installation also supports
+`python -m coding_agent`. Plan/run commands integrate this flow in P07/P08.
+
+`context.explorer` consumes captured inputs and returns a validated RepoSummary.
+Offline exploration identifies representative language/framework indicators,
+declarations, imports and call-like source text; it does not resolve a full call
+graph or prove module semantics. Optional model additions explain responsibilities,
+coupling, boundaries and assumptions using captured quotes and line ranges.
+Sources must exist and match their cited excerpts. Explicit rules must quote
+instruction or user sources verbatim; code observations cannot establish rules.
+Nested instruction references retain their subtree scope. Models receive no
+execution tools. Schema/source validity is not proof of semantic correctness.
+
+User guidance outside the generated Markdown markers is preserved, including CRLF
+line endings; `--rule` appends explicit guidance and requests refresh. Existing
+AGENTS.md/CONTRIBUTING.md/CLAUDE.md remain source authorities. project.json contains
+an index, not editable rules. Immutable `knowledge-<revision>.json` snapshots retain
+the structured summary, input inventory, sanitized excerpts, original fingerprints,
+scope and predecessor revision. Old snapshots remain available after refresh.
+Repeated unchanged initialization reuses the revision; changed sources without
+refresh return stale. Model-derived entries with unchanged cited sources survive
+offline refresh, as do discovered commands with unchanged sources. Unresolved model questions remain, including required questions;
+a model reassessment must supply an answer quoting an explicit instruction/user
+source verbatim while retaining the original question text and required flag.
+Omitting or downgrading a required question cannot resolve it. An answer is an
+interpretation of cited guidance, not independent evidence of correctness. When
+an answer source changes, clear the answer and reopen the question. Required
+questions without an answer yield blocked, with instructions to supply guidance
+and refresh. This is an initialization outcome, never a workflow task state or
+verification claim.
+
+The controller owns `tools.initialization.InitializationRuntime`: no-follow reads reuse SafeFiles,
+scope filtering, and the existing POSIX/Windows IO boundary. Initialization
+operations are unavailable to Agent tool declarations and always denied by the
+ordinary PolicyEngine. Bootstrap creates only the controller directory, exclusive
+init.lock, and a per-attempt journal before the first recorded request. Exploration
+and publication each persist a request before dispatch; model requests/results use
+the same journal. Init records use `InitializationRevision(phase="initialization")`
+without a fabricated plan version or task ID. Its workspace revision is a captured
+input digest, not a P04 whole-workspace snapshot, and cannot carry Evidence or
+workflow outcomes.
+
+Publication rechecks source and user inputs, writes an immutable snapshot, replaces
+the generated guide, then installs metadata as the commit point. It checks journal
+availability before writes, uses expected-content checks and durable native IO.
+A changed generated section, mismatched files or unfinished result is not silently
+reconciled. The previous snapshot and user edits remain for inspection; an unresolved
+journal retains the lock. Automatic crash recovery remains P12 work. Each init
+currently inventories visible names and rereads the bounded selected inputs;
+incremental behavior reuses unaffected knowledge, not a filesystem watcher.
+
+Limits: 10,000 inventory entries; 12 default sources, at most 24 required sources
+including prior reads, focus and instructions; 1 MiB read limit per file; 32 KiB
+retained UTF-8 excerpt per repository source and 192 KiB total repository excerpt
+budget, plus at most 32 KiB of user guidance as a virtual source. Oversized
+instructions fail rather than silently omitting rules. Ordinary truncated excerpts
+and non-UTF-8 omissions are reported as gaps. Control paths, common dependency/build
+directories and credential paths are excluded. Known secrets and common credential
+assignments are redacted before prompts and archives. Fingerprints identify original
+inputs; retained excerpts may be sanitized/truncated and are not a restorable source
+snapshot. Only captured source contents are tracked for freshness; new inventory
+entries trigger staleness, but task-relevant unread files require focused inspection.
+
+Discovered commands retain source references, working directory and prerequisites;
+they are never run by init. Missing commands/environments are explicit unknowns.
+CLI exit codes: 0 for initialized/refreshed/reused, 2 for stale/blocked/errors,
+130 for interruption. Model assistance uses the existing OpenAI Provider with one
+request, 8192 maximum output tokens and a 60-second timeout. Offline/Fake and SDK
+mock verification must be reported separately from real account/API validation.
 
 ---
 
@@ -2522,7 +2597,7 @@ Unless repository constraints indicate otherwise:
 Python 3.12+
 Pydantic v2
 asyncio
-Typer
+argparse (P06; evaluate Typer only if later CLI requirements justify it)
 Git CLI
 subprocess
 SQLite
