@@ -7,6 +7,7 @@ from typing import Annotated, Literal, Self
 from pydantic import AwareDatetime, Field, StrictBool, model_validator
 
 from .models import Command, DomainModel, Identifier, NonEmptyStr
+from .workspace import WorkspaceOperation
 
 # Paths are operation data: stripping whitespace can redirect an approved action.
 ToolPath = Annotated[str, Field(min_length=1)]
@@ -43,7 +44,9 @@ class Git(DomainModel):
     operation: Literal["status", "diff"]
 
 
-Invocation = Annotated[Read | Search | Patch | Shell | Git, Field(discriminator="kind")]
+Invocation = Annotated[
+    Read | Search | Patch | Shell | Git | WorkspaceOperation, Field(discriminator="kind")
+]
 
 
 class ToolRequest(DomainModel):

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from test_tools import tool_harness as tool_harness
+from test_workspace import h as h
 
 from coding_agent.core.tools import Git, Patch, Read, Search, Shell
 from coding_agent.runtime.windows_process import WindowsReadOnlyProcess
@@ -582,3 +583,49 @@ def test_windows_job_assignment_failure_never_resumes_child(windows_harness, mon
     result = h.call(Shell(argv=(h.python, "-c", "print('executed')")), approve=True)
     assert result.status == "failed" and not result.output
     assert not inspect_journal(h.journal.directory / "events.jsonl").unresolved
+
+
+def test_managed_worktree_preserves_lpac_process_boundary(h, python_runtime):
+    from datetime import UTC, datetime
+
+    from coding_agent.core.tools import ToolApproval, ToolRequest, operation_fingerprint
+
+    h.prepare()
+    h.runtime.backend = WindowsReadOnlyProcess(runtime_roots=(python_runtime,))
+    h.runtime.timeout = 150
+    protected = [
+        str(h.source / "src/main.py"),
+        str(h.workspace.repository / "config"),
+        str(h.workspace.directory / "owner.json"),
+        str(h.journal.directory / "events.jsonl"),
+    ]
+    code = (
+        "print(open('src/main.py').read())\n"
+        f"for path in {protected!r}:\n"
+        " try: open(path).read()\n"
+        " except OSError: pass\n"
+        " else: raise AssertionError('escaped workspace')\n"
+        "try: open('src/main.py', 'w').write('bad')\n"
+        "except OSError: print('writes blocked')\n"
+        "else: raise AssertionError('writable copy')\n"
+    )
+    request = ToolRequest(
+        request_id="worktree-shell",
+        invocation=Shell(
+            argv=(str(python_runtime / "python.exe"), "-I", "-c", code),
+        ),
+    )
+    approval = ToolApproval(
+        fingerprint=operation_fingerprint(
+            request,
+            plan_fingerprint=h.spec.fingerprint,
+            task_id=h.runtime.task.id,
+            revision_json=h.runtime.read_revision().model_dump_json(),
+        ),
+        source="test",
+        timestamp=datetime.now(UTC),
+    )
+    result = asyncio.run(h.runtime.execute(request, approval=approval))
+    assert result.status == "succeeded", result
+    assert "user dirty" in result.output and "writes blocked" in result.output
+    assert (h.workspace.path / "src/main.py").read_bytes() == b"user dirty\n"

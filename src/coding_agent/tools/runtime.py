@@ -15,6 +15,7 @@ from ..core.tools import (
     Decision,
     Git,
     Patch,
+    PolicyDecision,
     Read,
     Search,
     Shell,
@@ -31,8 +32,10 @@ from ..core.workflow import (
     RunSpec,
     WorkflowEvent,
 )
+from ..core.workspace import WorkspaceOperation
 from ..runtime.filesystem import FileBoundaryError, SafeFiles
 from ..runtime.process import ProcessBackend, ProcessOutcome, default_process_backend
+from ..runtime.workspace import Workspace
 from ..session.records import JsonlJournal
 
 
@@ -45,7 +48,8 @@ class ToolRuntime:
         root: Path,
         journal: JsonlJournal,
         approval: PlanApproval | None,
-        read_revision: RevisionReader,
+        read_revision: RevisionReader | None = None,
+        workspace: Workspace | None = None,
         process_backend: ProcessBackend | None = None,
         git_executable: Path | None = None,
         timeout: float = 30,
@@ -69,7 +73,24 @@ class ToolRuntime:
             raise ValueError("invalid process/output bounds")
         self.journal = journal
         self.approval = PlanApproval.model_validate(approval) if approval is not None else None
-        self.read_revision = read_revision
+        self.workspace = workspace
+        if workspace is not None:
+            # Snapshot reads use forbidden; writes ALWAYS use the approved task's
+            # scope in PolicyEngine and SafeFiles. Serial tasks may allow different
+            # writes while sharing exactly the same readable snapshot boundary.
+            if (
+                workspace.scope.forbidden != self.task.scope.forbidden
+                or self.root != workspace.path
+            ):
+                raise ValueError("workspace root/scope does not match the task")
+            self.read_revision = workspace.revision_reader(
+                plan_version=self.spec.revision.plan_version,
+                context_revision=self.spec.revision.context_revision,
+            )
+        elif read_revision is not None:
+            self.read_revision = read_revision
+        else:
+            raise ValueError("a live revision reader is required")
         # Windows dispatches Git reads to the isolated Dulwich helper. The host
         # executable is a marker, never an unrestricted Git fallback.
         git_path = git_executable or Path(
@@ -84,23 +105,61 @@ class ToolRuntime:
         self.policy = PolicyEngine()
         self.journal.register_plan(self.spec)
 
+    def _sync_workspace(self) -> None:
+        if (
+            self.workspace is not None
+            and self.workspace.prepared
+            and self.root != self.workspace.path
+        ):
+            self.files = SafeFiles(
+                self.workspace.path,
+                self.task.scope,
+                max_bytes=self.files.max_bytes,
+            )
+            self.root = self.files.root
+
+    async def workspace_operation(
+        self, request_id: str, operation: WorkspaceOperation
+    ) -> ToolResult:
+        """Controller entry point; Agent execute() cannot acquire this capability."""
+        if self.workspace is None:
+            raise ValueError("no managed workspace configured")
+        request = ToolRequest(request_id=request_id, invocation=operation)
+        return await self._execute_recorded(request, approval=None, workspace_controller=True)
+
     async def execute(
         self, request: ToolRequest, *, approval: ToolApproval | None = None
+    ) -> ToolResult:
+        return await self._execute_recorded(request, approval=approval)
+
+    async def _execute_recorded(
+        self,
+        request: ToolRequest,
+        *,
+        approval: ToolApproval | None,
+        workspace_controller: bool = False,
     ) -> ToolResult:
         request = ToolRequest.model_validate(request)
         if len(request.model_dump_json().encode()) > 2 * 1024 * 1024:
             raise ValueError("request exceeds size limit")
         self.journal.begin_operation(request.request_id)
         try:
-            return await self._execute(request, approval)
+            return await self._execute(request, approval, workspace_controller=workspace_controller)
         except EventWriteError:
             self.journal.invalidate()
             raise
         finally:
             self.journal.end_operation()
 
-    async def _execute(self, request: ToolRequest, approval: ToolApproval | None) -> ToolResult:
+    async def _execute(
+        self,
+        request: ToolRequest,
+        approval: ToolApproval | None,
+        *,
+        workspace_controller: bool = False,
+    ) -> ToolResult:
         revision = Revision.model_validate(self.read_revision())
+        self._sync_workspace()
         fingerprint = operation_fingerprint(
             request,
             plan_fingerprint=self.spec.fingerprint,
@@ -115,6 +174,7 @@ class ToolRuntime:
         process_denial = (
             self.backend.denial(self.task, git=isinstance(invocation, Git))
             if isinstance(invocation, (Shell, Git))
+            and not (isinstance(invocation, Git) and self.workspace is not None)
             else None
         )
         plan_authorized = self.approval is not None and self.approval.covers(self.spec)
@@ -128,7 +188,18 @@ class ToolRuntime:
             plan_authorized=plan_authorized,
             process_denial=process_denial,
             operation_approved=approved,
+            workspace_controller=workspace_controller,
         )
+        if (
+            self.workspace is not None
+            and not self.workspace.prepared
+            and not (
+                workspace_controller
+                and isinstance(invocation, WorkspaceOperation)
+                and invocation.operation == "prepare"
+            )
+        ):
+            decision = PolicyDecision(decision=Decision.DENY, reason="prepare the workspace first")
         sequence = self.journal.next_sequence
         request_event_id = f"{self.spec.session_id}:{sequence}"
         started = datetime.now(UTC)
@@ -157,7 +228,26 @@ class ToolRuntime:
             try:
                 # The durable request is already flushed. Check again before new work.
                 self.journal.check_writable()
-                if isinstance(invocation, Read):
+                if isinstance(invocation, WorkspaceOperation):
+                    if self.workspace is None:
+                        raise ValueError("no managed workspace configured")
+                    executed = True
+                    output, artifacts = self.workspace.perform(
+                        invocation,
+                        self.journal,
+                        approved_revision=self.spec.revision.workspace_revision,
+                        timeout=self.timeout,
+                    )
+                    self._sync_workspace()
+                elif isinstance(invocation, Git) and self.workspace is not None:
+                    executed = True
+                    output = (
+                        self.workspace.status().model_dump_json()
+                        if invocation.operation == "status"
+                        else self.workspace.diff()
+                    )
+                    status, reason = "succeeded", "managed worktree inspected"
+                elif isinstance(invocation, Read):
                     output = self.files.read(invocation.path)
                     executed = True
                 elif isinstance(invocation, Search):
@@ -179,7 +269,7 @@ class ToolRuntime:
                         info = (self.root / ".git").lstat()
                         if not stat.S_ISDIR(info.st_mode):
                             raise FileBoundaryError(
-                                "external Git directories/worktrees require P04"
+                                "only controller-managed worktrees are supported"
                             )
                         executed = True
                         outcome = await self._run_git(invocation)
@@ -223,7 +313,13 @@ class ToolRuntime:
                 status, reason = "timed_out", "process timeout"
             except (OSError, ValueError) as error:
                 status = "failed"
-                reason = f"{type(error).__name__}: operation failed; inspect actual state"
+                reason = (
+                    str(error)
+                    if isinstance(invocation, WorkspaceOperation)
+                    else f"{type(error).__name__}: operation failed; inspect actual state"
+                )
+        if isinstance(invocation, WorkspaceOperation) and self.workspace is not None and executed:
+            artifacts = tuple(self.workspace.operation_artifacts)
         output = self.journal.sanitizer.text(output)
         encoded = output.encode()
         if len(encoded) > self.max_output_bytes:

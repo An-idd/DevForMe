@@ -6,6 +6,7 @@ from .paths import glob_matches as glob_matches
 from .paths import path_permitted as path_permitted
 from .paths import relative_parts as relative_parts
 from .tools import Decision, Git, Patch, PolicyDecision, Shell, ToolRequest
+from .workspace import WorkspaceOperation
 
 
 class PolicyEngine:
@@ -17,11 +18,19 @@ class PolicyEngine:
         plan_authorized: bool,
         process_denial: str | None,
         operation_approved: bool = False,
+        workspace_controller: bool = False,
     ) -> PolicyDecision:
         invocation = request.invocation
         if not plan_authorized:
             return PolicyDecision(
                 decision=Decision.DENY, reason="matching plan authorization required"
+            )
+        if isinstance(invocation, WorkspaceOperation):
+            return PolicyDecision(
+                decision=Decision.ALLOW if workspace_controller else Decision.DENY,
+                reason="controller workspace operation"
+                if workspace_controller
+                else "workspace lifecycle is controller-only",
             )
         if isinstance(invocation, (Shell, Git)):
             if isinstance(invocation, Shell):

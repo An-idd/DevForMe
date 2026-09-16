@@ -1,8 +1,8 @@
 # Verified Coding Agent — 开发计划
 
-> 版本：V1 / 2026-09-16 / P03 Windows 适配修订
+> 版本：V1 / 2026-09-16 / P04 工作区实现
 > 依据：[开发规格](CODING_AGENT_DEVELOPMENT_SPEC.md)，重点参考 §16、§24、§29–31、§35–39、§42、§44–48。
-> 当前状态：P01/P02 已完成；P03 安全修复与 Windows 适配已完成本机验证；macOS 集成复验待完成，状态为 IN_PROGRESS。本次范围仅 P03，P04–P12 尚未开始。
+> 当前状态：P01/P02 已完成；P03 安全修复与 Windows 适配已完成本机验证；macOS 集成复验待完成，状态为 IN_PROGRESS。用户明确授权继续 P04；P04 功能与 Windows 验收已完成，macOS 实机复验待完成，保持 IN_PROGRESS；P05–P12 尚未开始。
 
 ## 1. 目标与推进方式
 
@@ -43,27 +43,27 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 
 ## 3. 开工前需要统一的规格事项
 
-以下保留统一事项的原问题、结论与后续待办，不静默覆盖原规格。D01、D02 已在 P01 解决，D03 已在 P02 解决，D05 已在 P03 解决；其他事项在对应阶段先记录结论并同步冲突章节，再实现相关模型或行为。能由现有需求确定的实现选择自行处理；只有影响用户目标、授权或交付范围的未决问题才需要用户回答。
+以下保留统一事项的原问题、结论与后续待办，不静默覆盖原规格。D01、D02 已在 P01 解决，D03 已在 P02 解决，D05 已在 P03 解决，D04 在本次 P04 统一；其他事项在对应阶段先记录结论并同步冲突章节，再实现相关模型或行为。能由现有需求确定的实现选择自行处理；只有影响用户目标、授权或交付范围的未决问题才需要用户回答。
 
 | 编号 | 最迟阶段 | 现有问题 | 建议与完成条件 |
 | --- | --- | --- | --- |
 | D01 | P01 / 已解决 | §10 将 Tests/Review 画为后续任务，§11 又要求每任务验证后才能解锁下游 | 已同步 §10–11：业务任务包含实现、必需测试和适用审查；交付前另做全局集成验证。仅 VERIFIED 依赖解锁下游；图不持有可写运行状态 |
 | D02 | P01 / 已解决 | §7、§9、§29 的 Risk 示例结构不同；AcceptanceSpec 缺少统一模型 | 已同步 §7、§9.1、§23–24、§29.1：统一 RiskProfile，总等级覆盖已评估维度；AcceptanceSpec 使用稳定 criterion/check ID；Evidence 显式记录来源、结果、时间和计划/上下文/工作区版本 |
 | D03 | P02 / 已解决 | FAST 的精简流程与总体 Review、§39 两次审批要求关系不清 | 已同步 §11–12、§25–28、§31、§37、§39：所有模式保留声明检查及计划/交付授权边界；FAST 仅低风险且未声明审查时省略 Reviewer，仍经过 REVIEWING 和门禁；中/高风险分别至少 STANDARD/STRICT；完整 RunSpec 指纹匹配的授权在任务/修复间复用，交付授权单独处理 |
-| D04 | P04 | §18、§37 Phase 4、§49 对 Worktree 所属版本有不同表述 | 按 §37 将顺序执行所需的 Worktree 能力纳入 P04，任务并行保持后续范围；开工时统一相关章节和工作区生命周期 |
+| D04 | P04 / 已解决 | §18、§37 Phase 4、§49 对 Worktree 所属版本有不同表述 | 已统一 §18–19、§20、§49：V1/P04 纳入串行会话 Worktree；主仓库只读，会话独立 Git 基线包含当前未提交/未跟踪输入；重置创建新树并保留旧树，清理拒绝未知改动；并行、交付合并及重启协调保持后续范围 |
 | D05 | P03 / 已解决 | `network: false`、受限 shell 和控制记录保护缺少具体执行边界 | 已同步规格 §20–21.1、§30–31：原生文件工具使用 POSIX 目录描述符或 Windows 无跟随句柄；进程使用 macOS 只读沙箱或 Windows LPAC/Job 及受控执行副本，写入通过 Patch；不支持的权限/平台明确拒绝。数据库权限按资源访问定义，测试数据库与需写入/子进程的验证后端仍是 P09 前置条件；不能用命令前缀或 Worktree 声称隔离 |
 | D06 | P05 | 尚未选择真实 Provider 与可用凭据 | 选择一个可用 Provider，并定义结构化输出、工具调用、超时及用量返回；缺少凭据时继续离线实现，明确记录真实接入尚未验证 |
 
 ## 4. 阶段总览
 
-状态仅使用 `NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`DONE`。P01/P02 已完成；P03 安全复核后重新进入 IN_PROGRESS；`DONE` 必须附交付物与检查证据，见 §8 的阶段验收记录。
+状态仅使用 `NOT_STARTED`、`IN_PROGRESS`、`BLOCKED`、`DONE`。P01/P02 已完成；P03/P04 保留 macOS 实机复验待办，状态为 IN_PROGRESS；`DONE` 必须附交付物与检查证据，见 §8 的阶段验收记录。
 
 | 阶段 | 依赖 | 主要交付 | 状态 |
 | --- | --- | --- | --- |
 | P01 领域基础 | 无 | 领域模型、DAG 校验、状态转换约束、基础工程配置 | DONE |
 | P02 工作流引擎 | P01 | 单任务调度、状态机、QualityGate、Fake 完整生命周期 | DONE |
 | P03 工具与执行记录 | P02 | PolicyEngine、Tool Runtime、持久事件、工件记录 | IN_PROGRESS |
-| P04 工作区 | P03 | Git 状态/差异/快照、Worktree、受控恢复与清理 | NOT_STARTED |
+| P04 工作区 | P03 | Git 状态/差异/快照、Worktree、受控恢复与清理 | IN_PROGRESS |
 | P05 模型适配 | P04 | Provider 接口与一个真实实现 | NOT_STARTED |
 | P06 Explorer / init | P05 | 项目梳理、用户规范、项目知识与增量刷新、初始化 CLI | NOT_STARTED |
 | P07 Planner | P06 | 复杂度评估、PlanDraft 校验/编译、版本化分阶段计划、规则引用、规划 CLI | NOT_STARTED |
@@ -111,10 +111,10 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 
 ### P04 — 工作区与代码快照
 
-- [ ] 处理 D04，明确主仓库、会话工作区和 Worktree 的使用及清理规则。
-- [ ] 实现 prepare/status/diff/snapshot/reset/cleanup；区分用户原有修改与本次任务改动。
-- [ ] 快照包含相关未提交和未跟踪输入；排除执行日志及验证生成物造成的自我失效。
-- [ ] 使用临时 Git 仓库验证 Worktree 和恢复；文件删除或重置前核实目标与归属。
+- [x] 处理 D04，明确主仓库、会话工作区和 Worktree 的使用及清理规则。
+- [x] 实现 prepare/status/diff/snapshot/reset/cleanup；区分用户原有修改与本次任务改动。
+- [x] 快照包含相关未提交和未跟踪输入；排除执行日志及验证生成物造成的自我失效。
+- [x] 使用临时 Git 仓库验证 Worktree 和恢复；文件删除或重置前核实目标与归属。
 
 **验收：** 快照能发现实际源代码变化；失败、恢复、清理不丢失用户修改；保留可检查的差异工件。Worktree 只代表代码工作区隔离，不等同于进程或网络隔离。
 
@@ -248,6 +248,7 @@ python -m mypy src/coding_agent
 | 2026-09-15 / P03 开始 | 用户授权 P03；基线为 aef0b15，初始工作区干净；核对 Tool Runtime、权限边界与共享事件序列 | macOS 可调用 sandbox-exec，最小拒绝默认权限的 echo 探针成功；完整隔离能力尚未验证 | 先解决 D05，再实现工具、持久事件及故障测试；不推进 P04 | 规格 §20–21、§30–31；本文件 |
 | 2026-09-16 / P03 安全修复 | 用户授权修复审查中的两项 P1；开工基线 f858a2f、工作区干净；复用路径策略过滤 Git 索引清单，扩展多行秘密脱敏，补充回归测试；不增加依赖 | Windows 项目虚拟环境；受影响检查及完整检查见下方本次记录 | 真实 macOS 沙箱/POSIX 工件集成复验待完成，P03 保持 IN_PROGRESS；不推进 P04 | ToolRuntime、Sanitizer、tests/test_tool_security.py、tests/test_tools.py |
 | 2026-09-16 / P03 Windows 适配 | 用户明确授权“适配”；保留安全修复 Diff，扩展原生文件/日志与真正隔离的 Windows 执行；风险 high、复杂度 large（Win32 ABI、ACL、进程生命周期和 Git 平台差异耦合） | 发现原生 Git 无法在 AppContainer 内完成路径规范化；增加 Windows-only Dulwich 依赖并同步 D05，不放宽全局 ACL 或隔离 | 真实 Windows 边界、超时/取消及完整检查；保留 macOS 复验待办，不推进 P04 | runtime Windows 后端、core/paths.py、tests/test_windows.py、规格 §20–21.1 |
+| 2026-09-16 / P04 开始 | 用户明确指令“continue P04”；基线 4ad2458、工作区干净。按用户指令推进，保留 P03 的 macOS 复验待办；范围仅 D04、工作区、快照、恢复及工具集成。复杂度 large、风险 high：文件身份、日志耐久性、Git 管理与跨平台执行边界耦合 | 首批 P04 及故障测试、Windows Worktree/LPAC 集成已运行；完整结果见下方本次记录 | 不新增依赖；不推进 Provider、CLI、P09 验证执行或 P12 自动重启恢复 | core/workspace.py、runtime/workspace.py、runtime/_snapshots.py、tools/runtime.py、tests/test_workspace.py |
 
 ### P01 验收记录（2026-09-15）
 
@@ -546,12 +547,62 @@ Windows 私有 AppContainer 存储允许该次运行写临时数据，不是完�
 **后续安排（用户指令）：** 先提交当前安全修复与 Windows 适配，由用户后续验证。
 P03 保留 IN_PROGRESS 及 macOS 真实集成复验待办；提交不代表阶段验收通过。
 
+### P04 实现与验证记录（2026-09-16）
+
+**实际交付：** [领域模型](src/coding_agent/core/workspace.py)、
+[工作区运行时](src/coding_agent/runtime/workspace.py)、
+[无跟随快照与恢复存储](src/coding_agent/runtime/_snapshots.py)、
+[Tool Runtime 集成](src/coding_agent/tools/runtime.py)、
+[临时仓库回归](tests/test_workspace.py) 与 [Windows LPAC 集成](tests/test_windows.py)。
+
+- 主仓库只读；以当前可读输入建立独立会话 Git 基线及真实 detached Worktree，
+  不修改主仓库的 staged/unstaged 状态或分支，也不复制原仓库历史。
+- SHA-256 清单包含相关已修改、未跟踪及被 Git ignore 的文件、POSIX 执行位与输入排除规则。
+  真实 RevisionReader 接入工具和 QualityGate；新增源文件会令已有 Evidence 过期。
+- 生命周期仅由控制器经 Tool Runtime 请求；Agent 入口拒绝 prepare/reset/cleanup。
+  Git 管理只操作生成的私有元数据，真实命令与结果留痕；Shell 隔离保持 P03 边界。
+- Reset 保存当前快照并从已保存目标创建新 Worktree，完整保留旧树中的手工及被排除文件；
+  Cleanup 仅删除身份匹配且与基线一致的活动树，拒绝未知文件/目录。
+  旧树、原始内容存储及日志均保留，清理不表示自动销毁全部会话数据。
+- 读取上限为 20,000 项、单文件 1 MiB、内容总量 64 MiB、清单 8 MiB；遇到链接、
+  不支持的路径、读取失败或上限拒绝生成成功快照。常见缓存排除项和控制记录不引发自我失效；
+  自定义生成目录须在批准计划前配置，不能动态扩大排除范围来复用证据。
+
+**验证环境：** Windows 11 build 26200 / NTFS、Python 3.12.14、项目虚拟环境。
+所有文件/Git/故障样本都在临时目录中，主仓库只接受本次源代码修改。
+真实 macOS/POSIX Worktree 与进程集成仍待实机复验，P04 保留 IN_PROGRESS。
+
+| 检查 | 实际结果 |
+| --- | --- |
+| `python -m pytest -q -rs` | 543 passed、21 skipped；224.44 秒。覆盖当时全部测试，包括新增 Worktree/LPAC 集成 |
+| 收尾回归：`python -m pytest tests/test_workspace.py tests/test_tools.py tests/test_tool_policy.py tests/test_tool_security.py -q -rs` | 124 passed、21 skipped；27.95 秒。在全量测试后补充串行任务写范围、共享运行时重置后路径同步、无尾换行差异三个回归，并验证全部受影响工具测试 |
+| `python -m pytest tests/test_windows.py -k managed_worktree -q` | 收尾后再次通过：1 passed、39 deselected；5.26 秒 |
+| `python -m ruff check .` / `python -m ruff format --check .` | All checks passed；43 files already formatted |
+| `python -m mypy src/coding_agent` | 31 个源文件通过（Windows 目标） |
+| `python -m mypy --platform darwin --cache-dir .mypy_cache/darwin src/coding_agent` | 31 个源文件通过；仅静态检查，不替代 macOS 实测 |
+| 差异与文档 | `git diff --check`、本地 Markdown 链接和代码块检查通过 |
+
+21 项跳过为 18 项真实 macOS 集成、3 项 POSIX 专属测试；不计为通过。
+本次没有新依赖或模型调用。后续用户授权提交 P04；macOS/POSIX 复验待办与阶段状态保持不变。
+
+**过程中的失败：** Windows create-only 安装最初误用 replace 分支，触发不存在目标
+DACL 的错误；恢复复制改为明确的 create-only 安装，防止覆盖已有路径。
+元数据篡改测试最初使用覆盖隐藏的 `.git` 文件方式，被 Windows 拒绝；
+改为已存在文件句柄写入，以实际验证身份/内容保护，不弱化断言。
+macOS 目标类型检查发现 Windows-only 的 CREATE_NO_WINDOW 引用，改为明确的平台分支；
+Ruff 的测试夹具别名问题已修正。全量检查后补齐共享运行时的当前路径同步，避免 reset
+之后旧 ToolRuntime 使用新快照却写入保留树；新增回归并重跑全部受影响工具测试。
+串行任务范围复用曾被自动审批拒绝；只读核对证明读取依据 forbidden、每次写入仍由
+当前已批准任务的 PolicyEngine/SafeFiles 检查 allowed 后，复审允许实施。
+最终保留 forbidden 完全一致要求，并验证越界写入拒绝。
+
+**边界：** 当前不自动采用已有会话目录，不对缺失结果进行猜测性重试；
+跨重启 reconciliation/resume 和保留数据回收属于 P12。差异工件供检查，
+不宣称已经完成交付补丁应用、合并或 Verification Evidence 生成。
+
 ## 9. 下一步执行单元
 
-Windows 适配已在本机完成验证；下一步在 macOS 对当前 P03 代码完成真实集成复验并更新阶段状态。P03 验收通过且获得实施授权后，再推进 **P04：工作区与代码快照**：
-
-1. 处理 D04，统一主仓库、会话工作区和 Worktree 的生命周期及版本归属。
-2. 实现 prepare/status/diff/snapshot/reset/cleanup，区分并保留用户原有修改。
-3. 快照覆盖相关已修改和未跟踪文件；排除控制日志与验证生成物，不能只使用 Git HEAD。
-4. 通过 Tool Runtime 记录 Git/恢复副作用；Worktree 不代替进程或网络隔离。
-5. 在临时仓库验证失败、恢复和清理不丢改动；未授权前不推进 P04。
+1. P04 本机检查已完成；下一步由用户在 macOS/POSIX 复验当前 P03/P04 代码，再更新阶段状态。
+2. 用户已授权 P04，覆盖原“P03 复验后才能推进”的默认顺序；不将这一安排解释为
+   P03 已验收，也不自动推进 P05。
+3. P05 开始时先处理 D06，确定一个 Provider 与凭据条件；真实 API 冒烟与离线测试分别记录。

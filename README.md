@@ -2,9 +2,9 @@
 
 按项目规范执行编码任务，以关联代码快照的证据判断完成状态。
 
-当前实现 P01 领域基础、P02 串行工作流和 P03 工具运行时：包含 QualityGate、
-有限修复、受控文件/进程工具，以及共享的持久事件和差异工件。
-尚未实现真实 Agent、CLI、工作区快照、真实验证 Evidence 或最终交付。
+当前实现 P01 领域基础、P02 串行工作流、P03 工具运行时及 P04 会话工作区：
+包含 QualityGate、有限修复、受控文件/进程工具、持久事件、真实源码快照及 Worktree。
+尚未实现真实 Agent、CLI、真实验证 Evidence 或最终交付；平台复验状态见开发计划。
 
 ## 开发环境
 
@@ -21,7 +21,7 @@ python -m venv .venv
 
 若 `python` 不在 PATH 中，首条命令使用本机 Python 3.12+ 的绝对路径。
 测试不需要模型凭据。P03 使用临时文件/仓库和真实受限进程；网络拒绝测试会尝试
-连接本机地址及平台支持的 Unix socket，并要求操作被内核拒绝。测试夹具需要安装 Git；
+连接本机地址及平台支持的 Unix socket，并要求操作被内核拒绝。测试夹具和 P04 控制器工作区管理需要安装 Git；
 Windows 产品中的只读 Git helper 使用安装时自动加入的 Dulwich。
 
 macOS / Linux 的项目虚拟环境命令：
@@ -49,7 +49,7 @@ python3 -m venv .venv
   或 `model_copy(update=...)` 加载不可信数据。
 - Evidence 的结果、来源、带时区时间及版本字段由调用方明确提供。
   结构合法不代表真实执行或门禁通过；P02 QualityGate 校验身份、关联、结果与版本，
-  来源真实性和真实文件快照仍由后续阶段提供。
+  P04 提供真实文件快照；执行证据来源真实性由 P09 继续落实。
 - ScopePolicy / PermissionPolicy 描述边界；P03 的纯策略与具体文件/进程后端负责执行。
 
 ## P02 工作流边界
@@ -101,8 +101,9 @@ python3 -m venv .venv
   `database:deny` 不提供数据库服务/凭据；它不能禁止在已许可文件上做内存中的 SQL
   计算。含数据库数据的文件须列入 forbidden。需写缓存、派生子进程或测试数据库的
   测试/构建不在当前后端能力内；P09 必须解决所需权限并实际验证，不能跳过后记为通过。
-- Git 当前只提供隔离的 status/diff，禁用外部 diff、textconv、hooks、fsmonitor 及
-  全局配置；不支持提交、清理、外置 Git 目录或 Worktree 生命周期，后者属于 P04。
+- 未绑定 P04 工作区时，Git 工具只提供隔离的 status/diff，禁用外部 diff、textconv、
+  hooks、fsmonitor 及全局配置；不支持提交、清理或任意外置 Git 目录。
+  P04 工作区的 Git 状态/差异改由原生快照读取，生命周期仅对控制器开放。
   diff 先在同一沙箱中列出索引路径，再按原生读取策略筛选并使用字面路径生成差异，
   覆盖已删除的 forbidden 文件及控制目录；禁用重命名推断和彩色输出。
   索引清单受输出大小限制，失败、截断或无法完整解码时停止；两次调用共用超时预算。
@@ -139,7 +140,7 @@ python3 -m venv .venv
   工作区与日志不得位于工具链目录中。
 - 执行准备也计入超时；副本上限为 20,000 项、1 GiB。副本不是 P04 的代码快照。
   不适合当前单进程/只读约束的构建和测试仍需在 P09 扩展后端。
-- Windows Git status/diff 在同一 LPAC 内运行 Dulwich 1.2.14 只读 helper。
+- 未绑定 P04 时，Windows Git status/diff 在同一 LPAC 内运行 Dulwich 1.2.14 只读 helper。
   Git for Windows 的路径规范化在该隔离环境内不可用，详见
   [微软项目的问题记录](https://github.com/microsoft/mxc/issues/694)。
   helper 不执行系统 Git，也不放宽全局 ACL；不读取全局配置、运行 hooks 或外部过滤器。
@@ -156,3 +157,58 @@ P03 测试见 [工具集成与故障测试](tests/test_tools.py)、
 [Windows 真实集成测试](tests/test_windows.py)。
 Linux 进程后端尚未实现；当前修改后的 macOS 沙箱及 POSIX 日志集成复验仍待完成，
 实际检查结果见 [开发记录](DEV_PLAN.md)。
+
+
+## P04 工作区与真实快照
+
+- `runtime.workspace.Workspace(source, directory, task.scope)` 以当前源文件建立会话基线。
+  `directory` 必须尚不存在、父目录已存在且在源目录之外，也不能位于
+  `.agent/.agents/.codex/.git` 下；日志目录与会话目录分开。
+- 源仓库保持原样，包括暂存区和未跟踪文件。独立会话 Git 仓库只保存当前基线，
+  不复制原分支历史；其 detached Worktree 是后续 Read/Patch/Shell 的工作目录。
+- `workspace.revision_reader(plan_version=..., context_revision=...)` 实时计算源代码版本。
+  建立 RunSpec 时读取一次，绑定 ToolRuntime 后自动使用同一实际快照读取器。
+  WorkflowEngine 也应注入该读取器。准备前源码改变会拒绝旧计划的 prepare。
+- 文件身份包括路径、原始字节和 POSIX 执行位；默认排除控制目录、forbidden 和常见
+  Python 缓存。其他生成路径在构造 Workspace 时用 `excluded` 明确配置；
+  选择规则本身也进入快照身份。`.gitignore` 不会把相关输入排除出证据版本。
+- 同一会话中的串行任务可有不同 allowed 写范围，但 forbidden 读取边界必须完全一致。
+  写入始终按当前已批准 TaskSpec 检查；reset 后共享该工作区的运行时会跟随新的活动路径。
+- 控制器调用六项操作；Agent 的 `runtime.execute()` 无权调用生命周期操作：
+
+```python
+from coding_agent.core.workspace import WorkspaceOperation
+
+# runtime 已绑定 workspace、与实际快照对应的 spec、已有计划授权和 journal。
+prepared = await runtime.workspace_operation(
+    "prepare-1", WorkspaceOperation(operation="prepare")
+)
+# 检查 prepared.status == "succeeded" 后才能开始工具执行。
+saved = await runtime.workspace_operation(
+    "snapshot-1", WorkspaceOperation(operation="snapshot")
+)
+baseline = workspace.baseline
+assert baseline is not None
+
+# reset 保留当前树及手工修改，从保存的基线新建一棵树，并更新 runtime.root。
+restored = await runtime.workspace_operation(
+    "reset-1",
+    WorkspaceOperation(
+        operation="reset",
+        expected_revision=workspace.snapshot().revision,
+        target_revision=baseline.revision,
+    ),
+)
+```
+
+- `status/diff` 区分基线与本次变化；文本、二进制、删除/新增和模式变化都可检查。
+  `snapshot` 保存受保护的原始内容及清单，展示工件另做脱敏和截断标记。
+- `cleanup` 同样要求 `expected_revision`；只移除与基线一致且没有未知文件/目录的
+  活动树。之前 reset 保留的树、原始快照和日志继续保留。脏树清理被拒绝。
+- 所有副作用先有请求记录；固定 Git 管理命令与退出码也记录。主仓库配置、hooks、
+  全局配置及模型给定的 Git 命令不会被执行。任意仓库程序仍使用 P03 进程沙箱。
+- 单文件 1 MiB、总内容 64 MiB、20,000 项、清单 8 MiB；超限、读取失败、链接或
+  不支持的路径会失败，不能用部分清单宣称成功。现有会话目录不自动接管；
+  部分创建或结果丢失后保留现场，跨重启恢复与归档回收属于 P12。
+- 当前 Windows 已进行真实 Worktree 与 LPAC 集成验证；macOS/POSIX 实机复验待完成。
+  详见 [P04 回归](tests/test_workspace.py) 与 [阶段开发记录](DEV_PLAN.md)。

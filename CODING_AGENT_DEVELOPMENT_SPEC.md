@@ -1294,81 +1294,110 @@ Direct OS access
 
 # 18. Workspace Manager
 
-Workspace must be a first-class abstraction.
+Workspace is a first-class runtime component. V1 / P04 includes serial,
+session-owned Git Worktrees. Parallel tasks, merge/delivery and restart
+reconciliation remain later work.
 
-Interface:
+The controller binds a `runtime.workspace.Workspace` to ToolRuntime. Its six
+operations are `prepare/status/diff/snapshot/reset/cleanup`, dispatched through
+`ToolRuntime.workspace_operation(request_id, WorkspaceOperation(...))`.
+Agent-facing `execute()` rejects lifecycle requests. Read-only
+`Workspace.snapshot()/status()/diff()` and `revision_reader()` inspect actual
+files; WorkflowEngine remains the only task-state writer.
 
-```python
-class Workspace:
-    path: Path
-    branch: str | None
+**P04 lifecycle (D04):**
 
-    async def prepare(...)
-    async def snapshot(...)
-    async def diff(...)
-    async def reset(...)
-    async def cleanup(...)
-```
-
-V1:
-
-```text
-local repository workspace
-```
-
-V2:
-
-```text
-Git worktree per task
-```
-
-Future:
-
-```text
-Container / Remote Sandbox
-```
-
----
+- The source repository is read-only input. Preparation captures its current
+  readable files, including staged/unstaged working-file contents, deletions and
+  untracked inputs. It does not change the source index, branches or Git metadata.
+- A fresh controller-owned session directory outside the source tree contains a
+  private Git repository, immutable snapshot manifests/raw content blobs, and
+  detached linked Worktrees. Git history starts at the captured source baseline;
+  it does not copy the source history or preserve its staging split in the new
+  worktree. The original staging split remains intact in the source repository.
+- Only fixed Git plumbing runs against this generated repository: init with an
+  empty template, fast-import of raw bytes, worktree add without checkout,
+  read-tree, and guarded worktree removal. User/global configuration and hooks
+  are excluded. These are controller data-management operations, not arbitrary
+  repository programs or an unsandboxed Shell fallback.
+- Every lifecycle request is durably recorded before side effects. Concrete Git
+  arguments, working directory, timeout, result/exit code and bounded output are
+  retained as correlated artifacts. A journal failure stops further operations.
+- The initial snapshot must still match the approved plan when preparing. Paths,
+  raw content SHA-256 and POSIX executable bits determine source identity; mtime,
+  Git HEAD and controller logs do not. Scope exclusions and generated-output
+  selection are also part of the identity, preventing reuse across policy changes.
+- Relevant ignored files are included: `.gitignore` is not a source-identity
+  filter. Protected `.git/.agent/.agents/.codex` data and forbidden scope are
+  inaccessible inputs. Default generated exclusions are `.venv/**`,
+  `**/__pycache__/**`, `.pytest_cache/**`, `.mypy_cache/**`, `.ruff_cache/**`.
+  Other generated locations must be explicitly configured before plan approval.
+  Context rule revisions and environment/tool versions are separate facts.
+- Capture rejects links/reparse points, special files, ambiguous case/Unicode
+  names, unreadable inputs and exceeded bounds; it never silently certifies a
+  partial inventory. Initial limits: 20,000 entries, 1 MiB/file, 64 MiB total
+  content, 8 MiB manifest. Windows uses local NTFS/no-follow handles; POSIX uses
+  no-follow directory descriptors. Controller ownership is exclusive during
+  operations, as required by the process backends.
+- Snapshot blobs are lossless protected recovery data, not Agent-readable logs.
+  Human-facing diff/output artifacts are sanitized and may be explicitly
+  truncated; they do not replace the full snapshot or prove verification.
+- Status and diff compare current content with the immutable user baseline,
+  including new/deleted/binary files and mode changes. The managed-worktree Git
+  read tool uses these bounded native reads; arbitrary external Git pointers
+  remain rejected. Diff is an inspection artifact, not a delivery/apply contract.
+- Serial task runtimes may share the worktree when their forbidden read scopes
+  are identical. Each write is still checked against the current approved task's
+  allowed scope by both PolicyEngine and SafeFiles. Shared runtimes follow the
+  active path after reset instead of operating on a retained recovery tree.
+- Reset requires both the observed current revision and a saved target revision.
+  It saves current content and creates a new worktree from the target. The old
+  worktree is retained verbatim, including manual/ignored files; the runtime then
+  binds tools to the new path. Partial failure retains candidates and never
+  overwrites the active worktree.
+- Cleanup requires the observed revision, the unchanged baseline, verified
+  ownership/metadata, and an exact file/directory inventory. Modified or unknown
+  content, including ignored files and empty directories, causes refusal.
+  It removes only the active clean worktree. Prior recovery worktrees, raw
+  snapshots and execution records remain available for inspection.
+- Existing session directories are never implicitly adopted or overwritten.
+  Missing outcomes require inspection; restart reconciliation, archival retention
+  policy and final delivery/merge belong to P12.
 
 # 19. Git Worktree Strategy
 
-Parallel execution should use isolated Git worktrees.
-
-Example:
-
-```text
-repository
-│
-├── main
-│
-├── .agent/worktrees/task-001
-├── .agent/worktrees/task-002
-└── .agent/worktrees/task-003
-```
-
-Execution:
+P04 uses an independent repository per session to avoid exposing the user's Git
+metadata to an Agent. Each detached worktree shares only that session's baseline
+objects. The source index, hooks/configuration and existing local changes remain
+untouched.
 
 ```text
-Task
- ↓
-Create Worktree
- ↓
-Agent Coding
- ↓
-Verify
- ↓
-Generate Patch
- ↓
-Merge
- ↓
-Delete Worktree
+user repository (read-only source)
+external controller session directory
+├── owner.json / snapshots / blobs
+├── repository.git
+├── worktree-<id>        active task workspace
+└── worktree-<old-id>    retained recovery workspace after reset
+
+separate controller journal directory
+└── events.jsonl / sanitized artifacts
 ```
 
-Failure:
+The worktree path must be outside protected control directories so the existing
+macOS and Windows process boundaries continue to apply. Source preparation and
+snapshot recovery are serial; a Worktree is not a process or network sandbox.
+Repository programs still run through the P03 platform backend.
 
 ```text
-discard worktree
+Capture user baseline → Create detached Worktree → Agent Coding → Verify
+→ Inspect diff → authorized delivery (P12) → guarded cleanup
+Failure / reset → retain original Worktree and recovery snapshot
 ```
+
+Parallel task worktrees and merge conflict orchestration are future capabilities.
+Git's documented [no-checkout Worktree creation](https://git-scm.com/docs/git-worktree)
+and [index-only read-tree](https://git-scm.com/docs/git-read-tree) are used without
+executing checkout filters or source hooks.
 
 ---
 
@@ -1432,7 +1461,8 @@ read scope policy, then passes only permitted literal paths to Git with renames
 and color disabled. This protects deleted forbidden files still stored in Git.
 An incomplete, truncated or undecodable inventory stops the diff; both process
 calls share one timeout budget and recheck journal availability before continuing.
-External Git directories and worktree metadata are rejected until P04. The initial
+Unmanaged external Git directories and worktree metadata are rejected. P04 managed
+worktrees route status/diff through the native snapshot boundary described in Section 18. The initial
 macOS P03 implementation added no dependencies; the authorized Windows adaptation
 adds a Windows-only Dulwich 1.2.14 dependency for isolated read-only Git operations.
 No test parser, MCP integration or delivery command is introduced in P03.
@@ -3429,7 +3459,7 @@ After V1 is stable, future development can gradually add:
 
 ```text
 parallel Task execution
-Git Worktree isolation
+parallel Worktree orchestration (serial Worktrees are already in V1 / P04)
 Docker sandbox
 remote runtime
 LSP
