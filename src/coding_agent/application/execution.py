@@ -352,9 +352,19 @@ async def run(
                     or any(not e.passed for e in baseline.evidence)
                 ):
                     owner.record("execution_blocked", baseline, runtime.read_revision())
+                    failures = list(
+                        dict.fromkeys(
+                            f"{e.check_id} ({e.status}): {e.result}"
+                            for e in baseline.evidence
+                            if not e.passed
+                        )
+                    )
+                    missing = expected - {e.check_id for e in baseline.evidence}
+                    if missing:
+                        failures.append("Missing checks: " + ", ".join(sorted(missing)))
                     return RunResult(
                         status="blocked",
-                        reason="Required baseline checks did not pass",
+                        reason="Required baseline checks did not pass: " + "; ".join(failures),
                         fingerprint=spec.fingerprint,
                         session_id=spec.session_id,
                         journal=str(owner.journal.directory / "events.jsonl"),

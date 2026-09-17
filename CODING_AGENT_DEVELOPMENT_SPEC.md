@@ -1842,6 +1842,20 @@ or review. Commandless DIFF is unavailable; REVIEW remains the independent revie
 
 Baseline checks execute before any Coder call on the captured starting Worktree; failure,
 missing coverage or unavailable execution blocks implementation and retains baseline results.
+Capability prerequisites can use the existing requirement-wide command checks and
+baseline_check_ids, including non-refactor plans. Each probe must belong to a relevant
+criterion and retain the actual behavior checks. The controller does not infer capability
+from executable availability or a version response. A failed baseline names the check,
+evidence status and reason in the application result and never invokes Coder.
+
+examples/python-private-temp-check.json is a single AcceptanceCheck template, not a complete
+PlanDraft. It tests one os.mkdir(0o700), file write/read and cleanup under the configured
+TMPDIR inside the verification sandbox. It avoids tempfile's repeated retries without
+changing private-directory semantics or granting new access. Include it before first-plan
+approval when that capability is required. Existing acceptance-revision restrictions remain;
+a new plan must not bypass an active run's budgets or authorization. This only detects the
+known limitation and blocks earlier; it does not fix the unsupported capability.
+
 After task-local gates pass for the entire current graph, conservatively rerun every task's
 non-review acceptance and requirement-wide non-review acceptance at the final snapshot.
 Record these as phase=final; any failure blocks the application result. Historical task
@@ -1867,6 +1881,9 @@ retains minimal scratch rights. A strict expected-failure test preserves the mis
 create/write/cleanup criterion; it is not successful platform acceptance. P09 stays open.
 See [CPython mkdir implementation](https://github.com/python/cpython/blob/3.12/Modules/posixmodule.c)
 and [Python 3.12 os.mkdir](https://docs.python.org/3.12/library/os.html#os.mkdir).
+The matching [upstream issue #134587](https://github.com/python/cpython/issues/134587)
+and [fix PR #148804](https://github.com/python/cpython/pull/148804) remained open when
+checked on 2026-09-17; no patched interpreter is distributed or installed by this runtime.
 
 agent evidence [--path PATH] [--session run-ID] [--json] reads stored check artifacts,
 validates their hashes and original command/result sources, and compares approved task/check

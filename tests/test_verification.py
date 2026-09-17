@@ -493,3 +493,40 @@ def test_windows_verification_python_private_directory(windows_harness):
     assert "private-directory-start" in outcome.output, outcome
     assert outcome.status == "succeeded", outcome
     assert "private-directory-removed" in outcome.output
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="real Windows capability baseline")
+def test_private_temp_capability_blocks_before_coder(planned, scripted, python_runtime):
+    root, _, saved, _, _ = planned
+    probe = json.loads(
+        (Path(__file__).parents[1] / "examples/python-private-temp-check.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    raw = saved.draft.model_dump(mode="json")
+    raw["acceptance"]["checks"].append(probe)
+    raw["acceptance"]["criteria"][0]["required_check_ids"].append(probe["id"])
+    raw["baseline_check_ids"] = [probe["id"]]
+    updated = asyncio.run(
+        plan(
+            root, draft=PlanDraft.model_validate(raw), new_plan=True, reason="Require private temp"
+        )
+    ).plan
+    assert not updated.draft.refactor
+    assert saved.draft.acceptance.checks[0] in updated.draft.acceptance.checks
+    settings = VerificationSettings(runtime_roots=(python_runtime,))
+    outcome = run(planned, settings, approve=run(planned, settings).fingerprint)
+    assert outcome.status == "blocked" and not scripted[1]
+    assert "python-private-temp (unavailable)" in outcome.reason
+    ledger = inspect_evidence(root)
+    assert ledger.status == "recorded" and len(ledger.checks) == 1
+    record = ledger.checks[0].record
+    assert record.phase == "baseline" and ledger.checks[0].current
+    assert record.version.status == "succeeded"
+    assert record.result.status == "failed" and record.result.exit_code != 124
+    assert "PermissionError" in record.result.output
+    assert record.check.command == tuple(probe["command"])
+    assert record.evidence[0].status == "unavailable"
+    assert record.before == record.after
+    for source in (root, Path(outcome.worktree)):
+        assert (source / "service.py").read_bytes() == b"def run(): return 1\n"

@@ -1103,6 +1103,32 @@ coding-agent-p09-mkdir-delete-child.log。保留诊断失败，不以模拟结�
 [Python 3.12 os.mkdir](https://docs.python.org/3.12/library/os.html#os.mkdir)。
 本次尚未提交或推送。
 
+### 8.12.1 P09 能力前置检查（2026-09-17）
+
+起点 e07a015，工作区干净；用户继续授权 P09。复杂度 medium、风险 high：
+复用已有基线、审批、沙箱、记录与证据门禁，不改隔离实现，不推进 P10。
+核对 [CPython #134587](https://github.com/python/cpython/issues/134587) 与
+[PR #148804](https://github.com/python/cpython/pull/148804)，均仍开放，未发现可直接采用的已合并修复。
+保留上节兼容失败；不把重试超时的诊断改进声称为临时目录能力修复。
+
+新增 examples/python-private-temp-check.json，作为完整草稿中单个 command 检查的模板：
+直接调用一次 os.mkdir(0o700)，验证读写/清理，用既有 baseline_check_ids 在 Coder 前运行。
+无需新增领域字段或配置开关；必须关联 criterion，保留业务测试和预算。
+Planner 提示词要求记录必需能力的未知项或基线探测；模型提示不是已验证能力。
+run 的基线阻塞原因现在包含 check ID、证据状态和原因，避免只返回笼统失败。
+已有计划的验收修订仍受 P11 限制，文档禁止用新计划绕过活动会话授权或预算。
+
+真实 Windows 测试确认非重构计划也能使用该基线：版本探测成功、能力命令立即失败
+（PermissionError、非超时）、Evidence 为 unavailable、Coder 未调用、原源码和 Worktree
+字节未改动，现有业务检查保留。受影响回归 3 passed（12.14 秒）。
+首轮静态检查只发现新测试一行超长，已用 Ruff 格式化。
+最终全量 863 passed、24 skipped、1 xfailed（351.46 秒）；
+日志位于本机临时目录 coding-agent-p09-preflight-full.log，定向日志为
+coding-agent-p09-capability-baseline.log。既有跨平台/真实账号跳过项和 Windows 已知失败保留。
+Ruff check/format、Windows/Darwin mypy（60 个源码文件）、模板 Schema/Python 语法、
+文档 UTF-8/代码围栏和 git diff --check 均通过。未执行真实模型调用。
+原 TemporaryDirectory 成功断言及严格 xfail 保留，P09 仍为 IN_PROGRESS；本次尚未提交。
+
 ## 9. 下一步执行单元
 
 1. P06 真实探索需在代表性项目上显式运行 agent init PATH --refresh --model MODEL 并核查来源质量。

@@ -1,0 +1,10 @@
+{
+  "id": "python-private-temp",
+  "description": "Python can create, write, read and remove a private temporary directory",
+  "evidence_type": "command",
+  "command": [
+    "python",
+    "-c",
+    "import os, pathlib, uuid\ndirectory = pathlib.Path(os.environ['TMPDIR']) / ('private-probe-' + uuid.uuid4().hex)\nos.mkdir(directory, 0o700)\nfile = directory / 'probe'\ntry:\n    file.write_bytes(b'probe')\n    assert file.read_bytes() == b'probe'\nfinally:\n    if file.exists():\n        file.unlink()\n    directory.rmdir()\nprint('private temporary directory capability available')\n"
+  ]
+}

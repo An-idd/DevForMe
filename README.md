@@ -229,6 +229,30 @@ Python 目录需包含可独立运行的 python.exe、DLL、Lib/DLLs 与所需 s
 P10 审查、P11 跨批次协调及 P12 交付仍待完成；requirement_complete 始终为 false。
 Windows 验证使用临时测试项目和离线 Coder；真实账号与 macOS/POSIX 的待验收项见 DEV_PLAN。
 
+### Windows 私有临时目录前置检查
+
+如果计划中的测试或构建依赖 Python 私有临时目录，可把
+[单次能力探测模板](examples/python-private-temp-check.json) 纳入首次计划草稿：
+
+1. 把模板作为一项检查加入需求级 acceptance.checks。
+2. 把 python-private-temp 加入相关 criterion 的 required_check_ids，保留原有业务检查。
+3. 把同一 ID 加入 baseline_check_ids；普通功能开发也支持基线，不必标为 refactor。
+
+模板是单个 AcceptanceCheck，不是可直接传给 --draft 的完整 PlanDraft。
+请在规划阶段合入完整草稿并审阅；已有计划的验收变更仍受 P11 未实现的限制，
+不能用 --new 绕过正在执行计划的授权或预算。
+
+批准运行后，控制器先在实际验证沙箱探测工具版本，再执行一次 os.mkdir(0o700)，
+以及目录内文件读写和清理。直接调用底层 mkdir 可暴露拒绝访问，避免 tempfile 的大量重试。
+失败会记录绑定版本的 unavailable 证据，并在调用 Coder 前阻塞；run 的原因包含检查 ID、
+状态与原因，可用 agent evidence 查看原始退出码和输出。该探测沿用既有权限与工具预算，
+不是权限授予，也不能替代行为测试；最终快照仍需重跑必需检查。
+
+本机 Python 3.12.14 的单次探测实际被 LPAC 拒绝；未声明探测的命令仍可能超时。
+这是已复现的 [CPython 上游问题 #134587](https://github.com/python/cpython/issues/134587)，
+[修复 PR #148804](https://github.com/python/cpython/pull/148804) 于 2026-09-17 核对时尚未合并。
+未安装补丁解释器、改写标准库或放宽沙箱权限。
+
 ## P08 执行与记录查看
 
 先通过 agent plan 保存并审阅计划，再使用已登录的专用 Codex 目录。
