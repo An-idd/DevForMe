@@ -98,6 +98,8 @@ class ToolResult(DomainModel):
     executed: StrictBool
     reason: NonEmptyStr
     exit_code: int | None = None
+    process_argv: Command | None = None
+    process_cwd: ToolPath | None = None
     output: str = ""
     truncated: StrictBool = False
     artifacts: tuple[ArtifactRef, ...] = ()
@@ -117,6 +119,10 @@ class ToolResult(DomainModel):
             raise ValueError("rejected or pending decisions cannot record execution outcomes")
         if self.decision is Decision.ALLOW and self.status in {"denied", "needs_approval"}:
             raise ValueError("allowed operations require an execution outcome")
+        if (self.process_argv is None) != (self.process_cwd is None):
+            raise ValueError("process command and cwd must be recorded together")
+        if not self.executed and (self.process_argv is not None or self.process_cwd is not None):
+            raise ValueError("unexecuted operations cannot contain launch details")
         if not self.executed and self.exit_code is not None:
             raise ValueError("unexecuted operations cannot have process exit codes")
         if self.status == "succeeded" and (not self.executed or self.exit_code not in {None, 0}):

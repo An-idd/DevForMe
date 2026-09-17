@@ -8,6 +8,7 @@ import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Protocol
 
 from ..core.models import TaskSpec
@@ -20,6 +21,8 @@ class ProcessOutcome:
     output: str
     truncated: bool
     timed_out: bool
+    argv: tuple[str, ...] | None = None
+    cwd: str | None = None
 
 
 class ProcessBackend(Protocol):
@@ -39,16 +42,19 @@ class ProcessBackend(Protocol):
     ) -> ProcessOutcome: ...
 
 
-def default_process_backend(*, runtime_roots: tuple[Path, ...] = ()) -> ProcessBackend:
+def default_process_backend(
+    *, runtime_roots: tuple[Path, ...] = (), verification: bool = False
+) -> ProcessBackend:
     if sys.platform == "win32":
         from .windows_process import WindowsReadOnlyProcess
 
-        return WindowsReadOnlyProcess(runtime_roots=runtime_roots)
-    return MacReadOnlyProcess(runtime_roots=runtime_roots)
+        return WindowsReadOnlyProcess(runtime_roots=runtime_roots, verification=verification)
+    return MacReadOnlyProcess(runtime_roots=runtime_roots, verification=verification)
 
 
 class MacReadOnlyProcess:
-    def __init__(self, *, runtime_roots: tuple[Path, ...] = ()) -> None:
+    def __init__(self, *, runtime_roots: tuple[Path, ...] = (), verification: bool = False) -> None:
+        self.verification = verification
         self.runtime_roots = tuple(path.resolve(strict=True) for path in runtime_roots)
 
     def denial(self, task: TaskSpec, *, git: bool = False) -> str | None:
@@ -64,7 +70,15 @@ class MacReadOnlyProcess:
                 return "process backend supports literal or directory/** exclusions only"
         return None
 
-    def profile(self, root: Path, task: TaskSpec, protected: Path, *, git: bool = False) -> str:
+    def profile(
+        self,
+        root: Path,
+        task: TaskSpec,
+        protected: Path,
+        *,
+        git: bool = False,
+        scratch: Path | None = None,
+    ) -> str:
         def quoted(path: Path) -> str:
             return json.dumps(str(path), ensure_ascii=False)
 
@@ -101,7 +115,9 @@ class MacReadOnlyProcess:
         for pattern in task.scope.forbidden:
             prefix = pattern[:-3] if pattern.endswith("/**") else pattern
             rules.append(f"(deny file-read* file-map-executable (subpath {quoted(root / prefix)}))")
-        # No persistent writes, network (including Unix sockets), Mach IPC or process-fork.
+        if scratch is not None:
+            rules.append(f"(allow file-read* file-write* (subpath {quoted(scratch)}))")
+        # No source writes, network, Mach IPC or process-fork (even in verification).
         return "\n".join(rules)
 
     def validate_inputs(self, root: Path, task: TaskSpec, *, git: bool) -> None:
@@ -147,6 +163,42 @@ class MacReadOnlyProcess:
         max_output_bytes: int,
         git: bool = False,
     ) -> ProcessOutcome:
+        if self.verification and not git:
+            with TemporaryDirectory(prefix="coding-agent-verify-") as directory:
+                return await self._run(
+                    argv,
+                    cwd=cwd,
+                    root=root,
+                    task=task,
+                    protected=protected,
+                    timeout=timeout,
+                    max_output_bytes=max_output_bytes,
+                    scratch=Path(directory).resolve(),
+                )
+        return await self._run(
+            argv,
+            cwd=cwd,
+            root=root,
+            task=task,
+            protected=protected,
+            timeout=timeout,
+            max_output_bytes=max_output_bytes,
+            git=git,
+        )
+
+    async def _run(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: Path,
+        root: Path,
+        task: TaskSpec,
+        protected: Path,
+        timeout: float,
+        max_output_bytes: int,
+        git: bool = False,
+        scratch: Path | None = None,
+    ) -> ProcessOutcome:
         if reason := self.denial(task, git=git):
             raise ValueError(reason)
         if not argv or not Path(argv[0]).is_absolute() or any("\x00" in arg for arg in argv):
@@ -167,10 +219,23 @@ class MacReadOnlyProcess:
             "GIT_TERMINAL_PROMPT": "0",
             "GIT_PAGER": "",
         }
+        if scratch is not None:
+            environment.update(
+                {
+                    name: str(scratch)
+                    for name in (
+                        "TMPDIR",
+                        "HOME",
+                        "XDG_CACHE_HOME",
+                        "RUFF_CACHE_DIR",
+                        "MYPY_CACHE_DIR",
+                    )
+                }
+            )
         process = await asyncio.create_subprocess_exec(
             "/usr/bin/sandbox-exec",
             "-p",
-            self.profile(root, task, protected, git=git),
+            self.profile(root, task, protected, git=git, scratch=scratch),
             *argv,
             cwd=cwd,
             env=environment,
@@ -208,7 +273,12 @@ class MacReadOnlyProcess:
         await reader
         assert process.returncode is not None
         return ProcessOutcome(
-            process.returncode, output.decode("utf-8", errors="replace"), truncated, timed_out
+            process.returncode,
+            output.decode("utf-8", errors="replace"),
+            truncated,
+            timed_out,
+            argv,
+            str(cwd),
         )
 
     @staticmethod

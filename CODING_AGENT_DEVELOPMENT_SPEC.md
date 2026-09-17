@@ -1724,9 +1724,9 @@ test database service. Approved local file reads
 remain file reads: this is not a semantic ban on SQL computation or parsing local
 database files. Protect database data paths with forbidden scope. `test_only`
 requires actual test database provisioning/isolation and is rejected until that
-exists. The current backend also rejects writes needed by many builds/tests and
-does not allow child processes; this is a P09 capability prerequisite, not a reason
-to skip required checks and declare them passed.
+exists. The ordinary Coder backend rejects writes needed by many builds/tests and
+does not allow child processes. P09 verification-specific extensions and remaining
+capability limitations are defined in Section 22.1; missing capabilities never pass.
 
 Windows execution preparation copies at most 20,000 entries / 1 GiB within the
 same timeout budget. It does not modify input ACLs or provide P04 snapshots.
@@ -1804,6 +1804,84 @@ Task acceptance criteria
 ```
 
 ---
+
+## 22.1 P09 executable verification boundary
+
+The application uses VerificationRunner with the existing ToolRuntime, shared journal,
+permission checks and session tool budget. VerificationSettings selects trusted standalone
+runtime directories, a per-command timeout (default 30 seconds) and output limit (64 KiB).
+The settings and a controller-only requirement verification TaskSpec are bound into the
+RunSpec approval fingerprint. They do not add business nodes to WorkflowEngine or give
+Coder access to controller verification capabilities. Executables resolve only within
+configured roots and their bin/Scripts subdirectories; there is no ambient PATH fallback,
+dependency installation or inherited secret environment. Runtime roots must be canonical
+and separate from source, workspace and coding-engine credentials.
+
+Execute declared non-review acceptance checks at repository root. Each check first probes
+its executable/module version through a concretely authorized ToolRuntime request.
+A missing/unusable version prevents claiming a complete check. Then dispatch the exact
+declared command through the same permission boundary. Both requests consume the existing
+session tool budget; no phase or repair creates a new budget. Record before/after Revision,
+phase, task/check definition, resolved command, working directory, configured runtime,
+actual ToolResults, output references and Evidence in a verification_recorded artifact.
+ToolResult additionally records process_argv/process_cwd from the backend when available,
+including physical Windows execution-copy paths; historical records keep null launch metadata.
+These differ from the approved logical command and controller-resolved host executable.
+One check shared by multiple criteria yields one executed command and one Evidence per pair.
+Durable request precedes execution; evidence persistence failure poisons the writer,
+stops further operations and retains the controller lock.
+
+Supported test reports are pytest / python -m pytest and python -m unittest.
+Require a positive collection/run count and an unambiguous successful summary.
+Zero collection is inconclusive (including unittest exit 5); skipped, xfailed or deselected
+coverage is not passed. Truncated output, timeout, unsupported wrappers or missing positive
+reports are inconclusive. Missing dependencies/capabilities are unavailable; definite
+nonzero check failures are failed. Other declared executable check types record exit status.
+A command's success establishes only its declared check result, not semantic completeness
+or review. Commandless DIFF is unavailable; REVIEW remains the independent review protocol.
+
+Baseline checks execute before any Coder call on the captured starting Worktree; failure,
+missing coverage or unavailable execution blocks implementation and retains baseline results.
+After task-local gates pass for the entire current graph, conservatively rerun every task's
+non-review acceptance and requirement-wide non-review acceptance at the final snapshot.
+Record these as phase=final; any failure blocks the application result. Historical task
+state transitions are not rewritten outside WorkflowEngine. Task-local VERIFIED does not
+certify final integration, remaining milestones or delivery. requirement_complete stays false.
+
+Windows verification adds a writable private scratch directory to the existing LPAC
+execution copy; source/runtime copies remain read-only. A non-breakaway Job permits at most
+16 active processes, 512 MiB per process and 1 GiB total, with kill-on-close and no error dialogs.
+Wait for all descendants; timeout/cancellation terminates the whole Job before removing
+scratch. Network capabilities remain absent. Regular Coder process calls retain the original
+single-process read-only profile. macOS gets a private scratch directory, with process-fork,
+network and Mach IPC still denied. macOS child-process support and native verification are
+pending; isolated test databases, dependency downloads and source-directory build writes
+are unsupported and must not silently acquire broader permissions.
+
+On Windows, ordinary scratch files and directories with inherited ACLs support create,
+write and delete. Python 3.12.4+ TemporaryDirectory/mkdtemp uses os.mkdir(mode=0o700),
+which installs a protected ACL excluding the LPAC identity. This capability is currently
+unsupported: creation may retry until timeout; timeout remains inconclusive, not passed.
+Giving scratch full control did not make the created directory usable, so the backend
+retains minimal scratch rights. A strict expected-failure test preserves the missing
+create/write/cleanup criterion; it is not successful platform acceptance. P09 stays open.
+See [CPython mkdir implementation](https://github.com/python/cpython/blob/3.12/Modules/posixmodule.c)
+and [Python 3.12 os.mkdir](https://docs.python.org/3.12/library/os.html#os.mkdir).
+
+agent evidence [--path PATH] [--session run-ID] [--json] reads stored check artifacts,
+validates their hashes and original command/result sources, and compares approved task/check
+definitions and current plan/knowledge/actual Worktree snapshot. Historical status remains
+unchanged; freshness is a separate current flag. Missing source/plan/workspace cannot make
+old evidence current. Complete record inspection exits 0 without claiming task success.
+Outputs retain tool versions, elapsed timestamps, exit status and artifact references.
+Control history is protected from sandboxed project code; this is not an external signature
+scheme authenticating a whole fabricated history from a privileged host actor.
+
+References: [AppContainer isolation](https://learn.microsoft.com/en-us/windows/win32/secauthz/appcontainer-isolation),
+[Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects),
+[Job limits](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_limit_information).
+Windows tests establish the exercised boundaries; macOS profile construction is not native
+macOS acceptance. Account-dependent Coder/API smoke and P10-P12 requirements remain pending.
 
 # 23. Acceptance Checker
 
@@ -2632,10 +2710,10 @@ the plan. Controller ImplementationResult records before/after revisions, actual
 paths, dispatched commands and tool request IDs. Exit codes/statuses stay in the correlated
 ToolResults. These observations and model claims are separate; no summary produces Evidence.
 
-P09/P10 are not configured here. Verification returns no execution evidence, and the
-existing gate blocks missing checks. The unavailable reviewer cannot certify completion.
-A declared refactor or explicit baseline_check_ids blocks Worktree modification because the baseline cannot
-yet be established. Implemented drafts, failed attempts and partial changes remain in the
+The original P08 missing-verifier placeholder is replaced by P09 (Section 22.1).
+Unconfigured verification records unavailable evidence; required P10 review remains unavailable.
+A declared refactor or explicit baseline_check_ids now executes baseline checks before Coder,
+and blocks modification unless all required baseline coverage passes. Implemented drafts, failed attempts and partial changes remain in the
 independent Worktree; there is no source overwrite, cleanup, commit or delivery operation.
 Cancellation records interruption and retains a final snapshot/diff when recording and
 input checks remain usable. Unknown operation outcomes keep the controller lock.

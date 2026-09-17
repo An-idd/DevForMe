@@ -101,7 +101,8 @@ def test_real_patch_stays_in_worktree_and_missing_evidence_blocks_completion(pla
     result = run(planned, approve=run(planned).fingerprint)
     assert result.status == "blocked" and not result.requirement_complete
     assert result.workflow is not None, result
-    assert result.workflow.evidence == ()
+    assert result.workflow.evidence
+    assert all(e.status == "unavailable" for e in result.workflow.evidence)
     assert result.workflow.tasks[0].attempts == 1
     assert result.workflow.tasks[0].state == "BLOCKED"
     assert (root / "service.py").read_text() == "def run(): return 1\n"
@@ -208,9 +209,14 @@ def test_refactor_requires_baseline_before_any_modification(planned, refactor):
         }
     )
     asyncio.run(plan(root, draft=changed, reason="Declare refactoring invariants", new_plan=True))
-    result = run(planned)
+    preview = run(planned)
+    assert preview.status == "approval_required" and not workspace.exists()
+    result = run(planned, approve=preview.fingerprint)
     assert result.status == "blocked" and "baseline" in result.reason
-    assert not workspace.exists()
+    assert result.baseline.evidence
+    assert all(e.status == "unavailable" for e in result.baseline.evidence)
+    assert (root / "service.py").read_bytes() == b"def run(): return 1\n"
+    assert (Path(result.worktree) / "service.py").read_bytes() == b"def run(): return 1\n"
 
 
 def test_cancel_retains_real_patch_and_records_interruption(planned, scripted):

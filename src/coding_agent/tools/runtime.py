@@ -61,7 +61,11 @@ class ToolRuntime:
         max_file_bytes: int = 1_048_576,
     ) -> None:
         self.spec = RunSpec.model_validate(spec)
-        self.task = next(task for task in self.spec.graph.tasks if task.id == task_id)
+        self.task = next(
+            task
+            for task in (*self.spec.graph.tasks, *self.spec.verification_tasks)
+            if task.id == task_id
+        )
         self.files = SafeFiles(root, self.task.scope, max_bytes=max_file_bytes)
         self.root = self.files.root
         if journal.directory.is_relative_to(self.root):
@@ -237,6 +241,7 @@ class ToolRuntime:
         reason = decision.reason
         executed = False
         output, truncated, exit_code = "", False, None
+        process_argv = process_cwd = None
         before, after = None, None
         artifacts: tuple[ArtifactRef, ...] = ()
         cancelled = False
@@ -302,6 +307,7 @@ class ToolRuntime:
                             timeout=self.timeout,
                             max_output_bytes=self.max_output_bytes,
                         )
+                    process_argv, process_cwd = outcome.argv, outcome.cwd
                     output, truncated, exit_code = (
                         outcome.output,
                         outcome.truncated,
@@ -354,6 +360,8 @@ class ToolRuntime:
                 executed=executed,
                 reason=reason,
                 exit_code=exit_code,
+                process_argv=process_argv,
+                process_cwd=process_cwd,
                 output=output,
                 truncated=truncated,
                 artifacts=artifacts,

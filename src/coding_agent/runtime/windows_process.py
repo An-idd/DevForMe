@@ -16,7 +16,8 @@ from .process import ProcessOutcome
 
 
 class WindowsReadOnlyProcess:
-    def __init__(self, *, runtime_roots: tuple[Path, ...] = ()) -> None:
+    def __init__(self, *, runtime_roots: tuple[Path, ...] = (), verification: bool = False) -> None:
+        self.verification = verification
         self.runtime_roots = tuple(path.resolve(strict=True) for path in runtime_roots)
 
     def denial(self, task: TaskSpec, *, git: bool = False) -> str | None:
@@ -272,6 +273,24 @@ class WindowsReadOnlyProcess:
                         "HOME": str(staging / "no-home"),
                     }
                 )
+                if self.verification and not git:
+                    scratch = staging / "scratch"
+                    scratch.mkdir()
+                    box.grant_read(scratch, writable=True)
+                    environment.update(
+                        {
+                            name: str(scratch)
+                            for name in (
+                                "TEMP",
+                                "TMP",
+                                "TMPDIR",
+                                "HOME",
+                                "XDG_CACHE_HOME",
+                                "RUFF_CACHE_DIR",
+                                "MYPY_CACHE_DIR",
+                            )
+                        }
+                    )
                 remaining = deadline - monotonic()
                 if remaining <= 0:
                     raise TimeoutError("execution preparation exceeded timeout")
@@ -281,6 +300,7 @@ class WindowsReadOnlyProcess:
                     environment,
                     timeout=remaining,
                     max_output_bytes=max_output_bytes,
+                    max_processes=16 if self.verification and not git else 1,
                 )
         finally:
             box.close()

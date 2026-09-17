@@ -7,7 +7,7 @@ P05 模型适配、P06 项目初始化及 P07 计划 CLI。包含 QualityGate、
 源码快照、Worktree、OpenAI Responses 适配和有来源的项目知识。
 P05–P07 模型行为通过离线模拟测试，另有实验性 CodexCoder 接入本地 Codex 编码循环；
 P08 已接入任务上下文、run CLI、独立工作区和 diff/history。
-真实账号/API 冒烟、P09 验证 Evidence、P10 审查及最终交付仍待完成；跨平台复验及阶段状态见开发计划。
+P09 已接入版本化验证 Evidence；真实账号/API 冒烟、P10 审查及最终交付仍待完成；跨平台复验及阶段状态见开发计划。
 
 ## 开发环境
 
@@ -184,6 +184,51 @@ WorkflowEngine 仍要求匹配的 PlanApproval。批次结果保留 pending_mile
 不能据此宣称整个需求、最终集成检查或交付已完成。
 
 
+## P09 验证与证据查询
+
+run 接入基线、任务检查和最终快照检查。为验证命令提供项目外、由你维护的运行时目录；
+重复 --verification-runtime 可添加多个目录，预览与审批执行时参数须相同：
+
+~~~powershell
+.\.venv\Scripts\agent.exe run --path 'D:\Projects\Example' --workspace 'D:\AgentWork\example-run' --codex-home 'D:\AgentProfiles\coding-agent' --model MODEL --verification-runtime 'D:\AgentRuntimes\python312'
+# 核对预览后，使用同样参数追加 --approve FINGERPRINT
+.\.venv\Scripts\agent.exe evidence --path 'D:\Projects\Example'
+.\.venv\Scripts\agent.exe evidence --path 'D:\Projects\Example' --session run-PLAN_ID --json
+~~~
+
+运行时目录须已有验证工具及依赖；不会自动安装依赖或使用终端的 PATH。
+命令名仅在配置目录及其 bin/Scripts 中解析，绝对可执行路径也必须位于这些目录中。
+运行时不能与源项目、工作区或 Codex 登录目录重叠。Windows 将运行时复制进 LPAC：
+Python 目录需包含可独立运行的 python.exe、DLL、Lib/DLLs 与所需 site-packages；
+依赖外部 base Python 的普通 venv 不能视为独立运行时。不提供目录时，验证记录 unavailable。
+
+- 检查只执行已批准计划声明的命令；项目初始化发现的命令仍需在计划中映射到稳定 criterion/check ID。
+  每项先探测工具版本，再执行检查；逻辑命令及后端实际启动参数/工作目录、时间、退出码和脱敏输出引用均持久记录。
+  探测与检查都消耗原有会话工具预算，不在修复、基线或最终重跑时重置。
+- test 类型支持 pytest / python -m pytest，以及 python -m unittest 的标准文本报告。
+  零测试为 inconclusive；跳过、预期失败或 deselected 均不能作为完整必需覆盖；
+  截断、超时、未知包装器输出也不能通过。其他声明的 lint/static_analysis/build/command
+  记录实际退出码；语义覆盖仍由明确验收与后续独立审查约束。
+- 重构或显式基线计划先在原始 Worktree 快照运行 baseline_check_ids；
+  缺失、失败、不可用或无有效测试均在 Coder 修改前阻塞，保留已有失败。
+  任务图通过后，在最终快照保守重跑所有任务和需求级非审查检查。
+  最终检查失败时 run 返回 blocked；已记录的任务状态是历史状态，不代表最终交付认证。
+- Windows 验证沙箱允许独立临时目录写入和最多 16 个 Job 内进程；
+  源码/运行时只读、控制记录不可访问、网络仍禁止。等待全部子进程，超时或取消终止整个 Job；
+  单进程内存上限 512 MiB，Job 总计 1 GiB。Coder 原有进程能力保持单进程只读。
+  Windows 普通临时文件及继承 ACL 的目录可创建、写入和删除；Python 3.12.4+ 的
+  TemporaryDirectory/mkdtemp 使用受保护 ACL，目前与 LPAC 不兼容，可能重试到超时。
+  依赖此能力的检查不能通过；保留严格 xfail 能力测试，P09 尚未完成。
+  macOS 验证临时目录可写，仍禁止 process-fork；需要子进程的检查尚不支持，实机复验待完成。
+  未提供隔离测试数据库；网络、数据库、源码目录构建写入等能力不可用时不放宽权限。
+- evidence 只读校验记录工件摘要、原始 ToolRequest/ToolResult 和验收关联，
+  显示 baseline/task/final、计划/知识/实际源码修订、历史状态与当前快照是否匹配。
+  --json 包含完整检查与输出引用；没有记录不等于通过。修改代码、规则或计划后不会复用旧通过。
+  当前实现不认证仓库外部任意人伪造的整套控制历史，也不以 Git HEAD 代替实际源码快照。
+
+P10 审查、P11 跨批次协调及 P12 交付仍待完成；requirement_complete 始终为 false。
+Windows 验证使用临时测试项目和离线 Coder；真实账号与 macOS/POSIX 的待验收项见 DEV_PLAN。
+
 ## P08 执行与记录查看
 
 先通过 agent plan 保存并审阅计划，再使用已登录的专用 Codex 目录。
@@ -212,14 +257,14 @@ CODING_AGENT_CODEX_HOME、CODING_AGENT_CODEX_MODEL 提供。全部命令支持 -
   不同任务使用新的上下文。每段当前源码最多 32 KiB，整个上下文最多 512 KiB；
   必需上下文超限会阻塞，不静默删除规则。
 - 所有项目动作经过 Tool Runtime，进程仍受 P03 后端限制。整次执行默认最多 30 个
-  Agent/上下文工具请求及 31 个模型分段；达到工具额度后的拒绝请求仍留痕。
+  Agent/上下文/验证工具请求及 31 个模型分段；达到工具额度后的拒绝请求仍留痕。
   预算由同一日志派生，不随 Coder 实例/尝试重置；任务尝试次数与工作流总尝试限制同时生效。
   Codex 每次尝试默认另限 20 个工具调用、60 秒。分段数不代表 HTTP 请求数或硬 token 上限。
 - 原项目代码保持原样；修改保存在指定目录下的 Worktree，返回实际路径。
   运行时记录修改前后快照、实际改动路径、工具/命令及结果，模型总结独立标为 draft。
   新调用方、共享状态、依赖、范围或验证困难需要结构化 replan 请求，停止当前调度。
-- P09/P10 尚未配置，正常实现后会因缺少必需证据返回 blocked，后续任务不继续执行。
-  重构或显式声明基线检查的计划，在基线不可用时于任何修改前阻塞。模型所说的“测试通过”不能将状态变为 VERIFIED。
+- P09 已接入，未配置验证运行时会记录 unavailable 并阻塞；P10 尚未接入，必需审查仍阻塞。
+  重构或显式基线计划在基线未通过时于 Coder 修改前阻塞。模型所说的“测试通过”不能将状态变为 VERIFIED。
 - 会话记录位于 .agent/run-<plan-id>/，与 init/plan 共用独占锁。同一计划各版本共用一次执行身份；
   已有目录拒绝重跑，不重置预算。不自动恢复、删除修改、回写源项目或提交 Git；
   新建独立提案不代表恢复旧会话，恢复/跨批次协调仍属 P11/P12。
@@ -310,7 +355,7 @@ Remove-Item Env:CODING_AGENT_RUN_LIVE
 - `database:test_only`、联网 shell 尚不支持；macOS 进程后端还拒绝复杂 forbidden glob。
   `database:deny` 不提供数据库服务/凭据；它不能禁止在已许可文件上做内存中的 SQL
   计算。含数据库数据的文件须列入 forbidden。需写缓存、派生子进程或测试数据库的
-  测试/构建不在当前后端能力内；P09 必须解决所需权限并实际验证，不能跳过后记为通过。
+  测试/构建须使用上文 P09 验证模式；普通 Coder Shell 保持原有限制，缺失能力不能计为通过。
 - 未绑定 P04 工作区时，Git 工具只提供隔离的 status/diff，禁用外部 diff、textconv、
   hooks、fsmonitor 及全局配置；不支持提交、清理或任意外置 Git 目录。
   P04 工作区的 Git 状态/差异改由原生快照读取，生命周期仅对控制器开放。
@@ -350,7 +395,7 @@ Remove-Item Env:CODING_AGENT_RUN_LIVE
   单独的绝对仓库路径参数会映射到副本；嵌入脚本字符串中的原仓库绝对路径不会改写。
   工作区与日志不得位于工具链目录中。
 - 执行准备也计入超时；副本上限为 20,000 项、1 GiB。副本不是 P04 的代码快照。
-  不适合当前单进程/只读约束的构建和测试仍需在 P09 扩展后端。
+  普通 Coder Shell 保持单进程只读；P09 验证模式的 scratch、子进程和已知限制见上文。
 - 未绑定 P04 时，Windows Git status/diff 在同一 LPAC 内运行 Dulwich 1.2.14 只读 helper。
   Git for Windows 的路径规范化在该隔离环境内不可用，详见
   [微软项目的问题记录](https://github.com/microsoft/mxc/issues/694)。

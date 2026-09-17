@@ -7,6 +7,7 @@ import shutil
 from collections.abc import Sequence
 from pathlib import Path
 
+from .application.evidence import EvidenceLedger, inspect_evidence
 from .application.execution import RunResult
 from .application.execution import run as execute_plan
 from .application.initialization import InitializationResult, initialize
@@ -14,6 +15,7 @@ from .application.planning import PlanInspection, PlanningResult, inspect_plan, 
 from .core.models import ScopePolicy
 from .core.planning import PlanSettings
 from .core.provider import GenerationSettings, ModelFailure, ProviderError
+from .core.verification import VerificationSettings
 from .core.workflow import EventWriteError
 from .executors.codex import CodexSettings
 from .providers.config import AssistantConfig, load_assistant_config
@@ -88,9 +90,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--codex-home", type=Path, default=os.environ.get("CODING_AGENT_CODEX_HOME")
     )
     execution.add_argument("--model", default=os.environ.get("CODING_AGENT_CODEX_MODEL"))
+    execution.add_argument(
+        "--verification-runtime",
+        action="append",
+        type=Path,
+        default=[],
+        help="Trusted standalone runtime directory outside the project (repeatable)",
+    )
     execution.add_argument("--approve", help="Exact fingerprint printed by run preview")
     execution.add_argument("--json", action="store_true")
-    for name in ("diff", "history"):
+    for name in ("diff", "history", "evidence"):
         history = commands.add_parser(
             name, help="Inspect persisted execution records without running tools"
         )
@@ -122,8 +131,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         return OpenAIProvider(settings, api_key=config.api_key)
 
     async def run() -> (
-        InitializationResult | PlanningResult | PlanInspection | RunResult | RunHistory
+        InitializationResult
+        | PlanningResult
+        | PlanInspection
+        | RunResult
+        | RunHistory
+        | EvidenceLedger
     ):
+        if args.command == "evidence":
+            return inspect_evidence(args.path, args.session)
         if args.command in {"diff", "history"}:
             return inspect_execution(args.path, args.session)
         if args.command == "status":
@@ -142,6 +158,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return await execute_plan(
                 args.path,
                 workspace=args.workspace,
+                verification=VerificationSettings(
+                    runtime_roots=tuple(p.resolve(strict=True) for p in args.verification_runtime),
+                ),
                 approve=args.approve,
                 config=CodexSettings(
                     executable=Path(executable).resolve(strict=True),
@@ -208,6 +227,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if args.json:
         print(result.model_dump_json())
+    elif isinstance(result, EvidenceLedger):
+        for view in result.checks:
+            report = view.record
+            for evidence in report.evidence:
+                print(
+                    f"{report.phase} {evidence.task_id} {evidence.criterion_id}/"
+                    f"{evidence.check_id}: {evidence.status} "
+                    f"({'current' if view.current else 'historical or unavailable snapshot'})\n"
+                    f"  source={evidence.source} snapshot={evidence.workspace_revision}"
+                )
+        if not result.checks:
+            print("No recorded verification evidence")
+        print("Requirement complete: false")
     elif isinstance(result, RunResult):
         print(f"{result.status}: {result.reason}")
         if result.spec is not None:

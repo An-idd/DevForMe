@@ -114,7 +114,10 @@ def inspect_execution(root: Path, session_id: str | None = None) -> RunHistory:
                         diff = read_artifact(directory, artifact)
                         recorded = True
                         truncated = artifact.truncated
-        finished = any(e.kind in {"session_finished", "session_interrupted"} for e in view.events)
+        finished = any(
+            e.kind in {"session_finished", "session_interrupted", "execution_blocked"}
+            for e in view.events
+        )
         return RunHistory(
             status="recorded"
             if finished and not view.unresolved and not view.incomplete_tail

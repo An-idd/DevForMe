@@ -6,7 +6,7 @@ import subprocess
 import sys
 from ctypes import wintypes as w
 from pathlib import Path
-from time import monotonic
+from time import monotonic, sleep
 from uuid import uuid4
 
 if sys.platform != "win32":
@@ -124,6 +124,30 @@ delete_attributes = bind(kernel, "DeleteProcThreadAttributeList", None, P)
 create_process = bind(
     kernel, "CreateProcessW", w.BOOL, w.LPCWSTR, w.LPWSTR, P, P, w.BOOL, w.DWORD, P, w.LPCWSTR, P, P
 )
+
+
+class JobAccounting(ctypes.Structure):
+    _fields_ = [
+        ("user_time", ctypes.c_int64),
+        ("kernel_time", ctypes.c_int64),
+        ("period_user_time", ctypes.c_int64),
+        ("period_kernel_time", ctypes.c_int64),
+        ("page_faults", w.DWORD),
+        ("total_processes", w.DWORD),
+        ("active_processes", w.DWORD),
+        ("terminated_processes", w.DWORD),
+    ]
+
+
+query_job = bind(kernel, "QueryInformationJobObject", w.BOOL, w.HANDLE, ctypes.c_int, P, w.DWORD, P)
+
+
+def active_processes(job: int) -> int:
+    accounting = JobAccounting()
+    checked(query_job(job, 1, ctypes.byref(accounting), ctypes.sizeof(accounting), None))
+    return int(accounting.active_processes)
+
+
 create_job = bind(kernel, "CreateJobObjectW", w.HANDLE, P, w.LPCWSTR)
 set_job = bind(kernel, "SetInformationJobObject", w.BOOL, w.HANDLE, ctypes.c_int, P, w.DWORD)
 assign_job = bind(kernel, "AssignProcessToJobObject", w.BOOL, w.HANDLE, w.HANDLE)
@@ -196,12 +220,13 @@ class Lowbox:
             if value:
                 local_free(value)
 
-    def grant_read(self, directory: Path) -> None:
+    def grant_read(self, directory: Path, *, writable: bool = False) -> None:
         # Only controller-owned execution copies get ACLs. Original inputs are untouched.
         descriptor = P()
         checked(
             convert_sd(
-                f"D:P(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)(A;OICI;GRGX;;;{self.identity})",
+                f"D:P(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)"
+                f"(A;OICI;{'GRGWGXSD' if writable else 'GRGX'};;;{self.identity})",
                 1,
                 ctypes.byref(descriptor),
                 None,
@@ -231,7 +256,10 @@ class Lowbox:
         *,
         timeout: float,
         max_output_bytes: int,
+        max_processes: int = 1,
     ) -> ProcessOutcome:
+        if not 1 <= max_processes <= 16:
+            raise ValueError("invalid process limit")
         handles: list[int | None] = []
         attributes = None
         process = ProcessInfo()
@@ -289,10 +317,11 @@ class Lowbox:
             job = create_job(None, None)
             checked(job)
             limits = JobLimits()
-            # Kill on close, one process, memory cap, no unhandled-exception dialog.
-            limits.flags = 0x2000 | 0x8 | 0x100 | 0x400
-            limits.active_processes = 1
+            # No breakaway; kill descendants on close, bounded memory, no error dialog.
+            limits.flags = 0x2000 | 0x8 | 0x100 | 0x200 | 0x400
+            limits.active_processes = max_processes
             limits.process_memory = 512 * 1024 * 1024
+            limits.job_memory = 1024 * 1024 * 1024
             checked(set_job(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)))
             ui_limits = w.DWORD(0xFF)
             checked(set_job(job, 4, ctypes.byref(ui_limits), ctypes.sizeof(ui_limits)))
@@ -348,8 +377,8 @@ class Lowbox:
                 state = wait(process.process, 0)
                 if state not in (0, 258):
                     raise ctypes.WinError(ctypes.get_last_error())
-                if state == 0 and not available.value:
-                    # Once exited, all writes precede the final drain.
+                if state == 0 and active_processes(job) == 0 and not available.value:
+                    # Every descendant exited; all writes precede the final drain.
                     tail = w.DWORD()
                     if (
                         not peek_pipe(read_end, None, 0, None, ctypes.byref(tail), None)
@@ -359,11 +388,18 @@ class Lowbox:
                 if not timed_out and monotonic() >= deadline:
                     timed_out = True
                     checked(terminate_job(job, 124))
+                if timed_out and monotonic() > deadline + 5:
+                    raise OSError("sandbox job did not stop after timeout")
                 await asyncio.sleep(0.01)
             code = w.DWORD()
             checked(exit_code(process.process, ctypes.byref(code)))
             return ProcessOutcome(
-                int(code.value), output.decode("utf-8", errors="replace"), truncated, timed_out
+                int(code.value),
+                output.decode("utf-8", errors="replace"),
+                truncated,
+                timed_out,
+                argv,
+                str(cwd),
             )
         finally:
             reaped = True
@@ -376,6 +412,13 @@ class Lowbox:
                 close(process.process)
                 close(process.thread)
             if job:
+                try:
+                    deadline = monotonic() + 5
+                    while active_processes(job) and monotonic() < deadline:
+                        sleep(0.01)
+                    reaped &= active_processes(job) == 0
+                except OSError:
+                    reaped = False
                 close(job)
             if attributes is not None:
                 delete_attributes(attributes)

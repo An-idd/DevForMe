@@ -126,10 +126,14 @@ class InitializationRuntime:
     def __exit__(self, *args: object) -> None:
         retain_lock = False
         if hasattr(self, "journal"):
+            try:
+                self.journal.check_writable()
+            except EventWriteError:
+                retain_lock = True
             self.journal.close()
             try:
                 view = inspect_journal(self.journal.directory / "events.jsonl")
-                retain_lock = bool(view.unresolved or view.incomplete_tail)
+                retain_lock |= bool(view.unresolved or view.incomplete_tail)
             except (OSError, ValueError, EventWriteError):
                 retain_lock = True
         try:

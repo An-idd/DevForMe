@@ -2,7 +2,7 @@
 
 > 版本：V1 / 2026-09-16 / P08 应用集成已通过 Windows 离线验证，真实冒烟待验证
 > 依据：[开发规格](CODING_AGENT_DEVELOPMENT_SPEC.md)，重点参考 §16、§24、§29–31、§35–39、§42、§44–48。
-> 当前状态：P01/P02 已完成；P03 安全修复与 Windows 适配已完成本机验证；macOS 集成复验待完成，状态为 IN_PROGRESS。用户明确授权继续 P04；P04 功能与 Windows 验收已完成，macOS 实机复验待完成，保持 IN_PROGRESS；用户明确授权继续 P05，模型适配已完成离线实现，真实 API 冒烟待验证，P05 保持 IN_PROGRESS；用户另行授权本地 coding adapter，P08 已实现 Codex 接入、任务上下文及 run/diff/history，并通过 Windows 离线验证；真实账号/跨平台复验待完成，保持 IN_PROGRESS；用户授权继续 P06，初始化 CLI 与知识刷新已完成 Windows 离线验证，真实模型与 macOS/POSIX 复验待完成，保持 IN_PROGRESS；用户授权继续 P07，Planner、版本化计划和 CLI 已实现并通过 Windows 离线验证，真实模型与 macOS/POSIX 复验待完成，保持 IN_PROGRESS；P09–P12 尚未开始。
+> 当前状态：P01/P02 已完成；P03 安全修复与 Windows 适配已完成本机验证；macOS 集成复验待完成，状态为 IN_PROGRESS。用户明确授权继续 P04；P04 功能与 Windows 验收已完成，macOS 实机复验待完成，保持 IN_PROGRESS；用户明确授权继续 P05，模型适配已完成离线实现，真实 API 冒烟待验证，P05 保持 IN_PROGRESS；用户另行授权本地 coding adapter，P08 已实现 Codex 接入、任务上下文及 run/diff/history，并通过 Windows 离线验证；真实账号/跨平台复验待完成，保持 IN_PROGRESS；用户授权继续 P06，初始化 CLI 与知识刷新已完成 Windows 离线验证，真实模型与 macOS/POSIX 复验待完成，保持 IN_PROGRESS；用户授权继续 P07，Planner、版本化计划和 CLI 已实现并通过 Windows 离线验证，真实模型与 macOS/POSIX 复验待完成，保持 IN_PROGRESS；P09 已获用户授权并开始开发；P10–P12 尚未开始。
 
 ## 1. 目标与推进方式
 
@@ -68,7 +68,7 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 | P06 Explorer / init | P05 | 项目梳理、用户规范、项目知识与增量刷新、初始化 CLI | IN_PROGRESS |
 | P07 Planner | P06 | 复杂度评估、PlanDraft 校验/编译、版本化分阶段计划、规则引用、规划 CLI | IN_PROGRESS |
 | P08 Coder | P07 | Codex adapter、版本化上下文、受约束执行与 run/diff/history | IN_PROGRESS |
-| P09 Verification | P08 | 测试/构建/静态检查、结果解析、版本化 Evidence | NOT_STARTED |
+| P09 Verification | P08 | 测试/构建/静态检查、结果解析、版本化 Evidence | IN_PROGRESS |
 | P10 Reviewer | P09 | 独立上下文审查、结构化问题、规范与文档检查 | NOT_STARTED |
 | P11 修复与重规划 | P10 | 有界修复循环、复杂度重评估、计划变更和证据失效处理 | NOT_STARTED |
 | P12 恢复与 V1 验收 | P11 | Checkpoint/Resume、交付、结果报告、异常场景及对照评测 | NOT_STARTED |
@@ -172,7 +172,7 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 - [ ] 在 macOS/POSIX 实机复验应用运行、上下文、锁和中断留痕。
 
 **阶段边界：** P08 已复用 P06/P07 知识与计划并完成应用接线。真实账号/跨平台复验仍待完成；
-P09/P10 未配置，缺少必需证据时阻塞，不能调度后续任务。重构在缺少基线时于修改前阻塞。
+P09 已接入必需检查与基线；未配置验证环境或必需 P10 审查不可用时仍阻塞。重构在基线未通过时于修改前阻塞。
 本次执行预算由日志派生；跨重规划/恢复的累计预算协调仍属 P11/P12，P08 不实现恢复或自动交付。
 
 **验收：** 所有动作能关联任务和计划；模型自述与真实结果不符时采用真实记录；达到边界时停止调度并保留工件。此阶段尚不能把缺少后续验证/审查的任务标为 VERIFIED。
@@ -180,11 +180,13 @@ P09/P10 未配置，缺少必需证据时阻塞，不能调度后续任务。重
 ### P09 — Verification 与 Evidence
 
 - [ ] 核实验证命令所需的写入、子进程与测试数据库能力；扩展并验证 P03 后端，能力不可用时阻塞，不能跳过必需检查或静默放宽权限。
-- [ ] 执行适用的 test/lint/type-check/build 命令，记录工作目录、退出码、工具版本和输出引用。
-- [ ] 映射到稳定 criterion/check ID，区分 passed、failed、skipped、unavailable、inconclusive。
-- [ ] 绑定计划、上下文和实际代码快照；实现必需证据缺失及过期检查。
-- [ ] 提供 `agent evidence`；初版用保守重跑完成最终快照的验证。
-- [ ] 为重构在结构性实现修改前执行基线检查，记录已有失败与行为不变量；每批检查后保留最终集成验证要求。
+- [x] 执行适用的 test/lint/type-check/build 命令，记录工作目录、退出码、工具版本和输出引用。
+- [x] 映射到稳定 criterion/check ID，区分 passed、failed、skipped、unavailable、inconclusive。
+- [x] 绑定计划、上下文和实际代码快照；实现必需证据缺失及过期检查。
+- [x] 提供 `agent evidence`；初版用保守重跑完成最终快照的验证。
+- [x] 为重构在结构性实现修改前执行基线检查，记录已有失败与行为不变量；每批检查后保留最终集成验证要求。
+
+**能力边界：** Windows 普通 scratch 文件/目录及 Job 子进程已实测；Python 私有临时目录存在已复现的 LPAC 兼容失败（严格 xfail，见 §8.12）；macOS 子进程、测试数据库及原地构建写入仍未支持，第一项保持未完成。缺失能力明确阻塞。
 
 **验收：** 覆盖无测试收集、跳过、环境不可用、失败与验证后代码变化；它们不能被错误计作通过。检查从哪版代码得到、覆盖哪个条件均可查询。
 
@@ -1038,6 +1040,69 @@ mypy（56 源文件）、已安装 CLI help 与 git diff --check 通过。此次
 [对话补全](https://docs.bigmodel.cn/api-reference/模型-api/对话补全)；
 仅核对传输与 JSON 请求格式，不以模拟结果证明 glm-5.3 账号可用。
 
+## 8.12 P09 开发中（2026-09-16）
+
+用户明确授权 P09；起点 4da1c05、工作区干净。复杂度 large、风险 high：
+验证进程能力、请求/结果留痕、真实快照、基线/最终检查和证据查询相互关联。
+保留 P03–P08 的跨平台与真实账号待验收项；不推进 P10 审查实现或 P12 最终交付。
+
+当前实现：按批准的 criterion/check 执行版本探测和验证命令，全部经过 ToolRuntime；
+共享既有会话预算，拒绝没有配置的执行环境。JSON 证据工件保留版本、命令、工作目录、
+实际退出码和输出引用。pytest/unittest 解析区分无测试、跳过、失败与无法确认；
+通用测试包装器没有可确认的收集报告时不计通过。
+重构先执行基线，失败不调用 Coder；任务检查通过仍需适用审查；
+任务图通过后在最终快照保守重跑任务与需求级检查，需求整体完成仍为 false。
+新增只读 agent evidence，核对证据工件与源 ToolResult，并比较当前计划/知识/源码快照。
+
+沙箱：Windows 验证专用模式允许独立 scratch 写入及最多 16 个 Job 内进程，
+保持源码/运行时只读、无网络与无进程脱离；Job 限制总内存 1 GiB，单进程 512 MiB。
+首个真实 Windows 子进程测试已证明 scratch 可写，原项目、日志、禁读文件和网络均不可访问。
+macOS 增加独立 scratch 写入；process-fork 仍禁止，需子进程的 macOS 验证仍受限，待实机复验。
+测试数据库、联网依赖安装和源码目录中的构建写入不支持；记录不可用/失败，不能静默降级。
+
+首轮原有回归 192 passed、19 skipped、3 failed；失败为 P08 旧断言仍要求空证据/无基线工作区，
+已按 P09 契约调整为明确 unavailable 证据、审批前无操作、审批后基线失败仍保留原始字节。
+首轮新增专项 23 passed、3 failed：Review 不可用被测试误纳入“测试全通过”；
+查询把工作区父目录当成实际 Worktree；模拟证据写失败未毒化 writer。
+分别修正测试分类、从已记录 prepare 结果读取实际路径、失败时停止后续操作并保留锁。
+第二轮验证/执行联合回归 57 passed（83.09 秒）。真实 Windows unittest 成功和跳过先通过，
+空收集实际退出码为 5，解析器原先会分类为 failed；改为先识别零测试并记录 inconclusive，
+防止错误进入代码修复。随后新增篡改测试误解析普通输出为 JSON，以及取消测试漏导入已修正。
+定向回归 20 passed（12.94 秒）；Windows/macOS 配置专项 6 passed（63.93 秒），包含真实 LPAC
+临时目录、子进程隔离、成功/跳过/零收集，和主进程提前退出后仍等待整个 Job 的超时处理。
+ToolResult 补充后端实际 process_argv/process_cwd，区分逻辑命令与 Windows 执行副本路径；
+旧记录保留空启动字段；证据查询按原始已提供字段核对 RunSpec 指纹，避免新增默认字段改写历史身份。
+第一轮全量 862 passed、24 skipped（282.67 秒），发生在实际启动字段及临时目录生命周期补测前，
+不能代替当前代码最终回归。启动字段/篡改/取消定向 5 passed（38.52 秒）。
+
+2026-09-17 Windows 临时目录补测发现实际能力缺口：原普通 scratch 写入通过，
+但 TemporaryDirectory 创建时超时（首轮 153.12 秒；加诊断后 40.60 秒）。
+单次探测确认 os.mkdir(0o777) 成功、os.mkdir(0o700) 返回 WinError 5；
+Python mkdtemp 把该 PermissionError 当作名称冲突重试，表现为挂起。
+CPython 3.12.4+ 的私有目录使用 protected DACL，仅含 SYSTEM/Administrators/Owner，
+排除了 LPAC 身份。只增加 DELETE_CHILD 仍失败；临时授予 scratch 完全控制后虽可创建，
+目录内写入及清理仍被拒绝。已撤回完全控制和 DELETE_CHILD 实验，保留最小读写执行/删除权限。
+不修改 Python 标准库或绕开 LPAC；原私有目录创建/写入/清理成功断言保留在严格 xfail
+能力测试中，失败明确计入未完成项，不能视为该能力通过。普通目录的创建、写入、删除、
+子进程禁读原项目/控制记录/敏感文件及禁网断言继续正常执行。
+这意味着 P09 尚不支持所有 pytest 插件、临时目录 fixture 或构建工具。
+
+专项 35 passed、1 xfailed（88.15 秒）；Ruff check/format 与 Windows/Darwin mypy
+均通过（60 个源码文件）。最终全量 862 passed、24 skipped、1 xfailed（352.34 秒），
+日志 coding-agent-p09-full-20260917.log；24 项跳过仍为 macOS/POSIX 和真实账号/API
+环境条件，1 项 xfail 是上述 Windows 已知能力失败，不计为通过。agent evidence --help、
+文档 UTF-8/代码围栏及 git diff --check 通过。P09 保持 IN_PROGRESS。
+日志位于本机临时目录 coding-agent-p09-verification-final.log、
+coding-agent-p09-mkdir-probe.log、coding-agent-p09-mkdir-full-scratch.log、
+coding-agent-p09-mkdir-delete-child.log。保留诊断失败，不以模拟结果代替平台实测。
+
+官方核对：[AppContainer isolation](https://learn.microsoft.com/en-us/windows/win32/secauthz/appcontainer-isolation)、
+[Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)、
+[Job limits](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_limit_information)、
+[CPython mkdir](https://github.com/python/cpython/blob/3.12/Modules/posixmodule.c)、
+[Python 3.12 os.mkdir](https://docs.python.org/3.12/library/os.html#os.mkdir)。
+本次尚未提交或推送。
+
 ## 9. 下一步执行单元
 
 1. P06 真实探索需在代表性项目上显式运行 agent init PATH --refresh --model MODEL 并核查来源质量。
@@ -1050,6 +1115,7 @@ mypy（56 源文件）、已安装 CLI help 与 git diff --check 通过。此次
    Windows WMI 诊断尚未定位；后续真实模型/SDK 平台查询时继续观察并保留实际结果。
 4. 显式运行 CODING_AGENT_RUN_LIVE=1 对应的 P08 应用冒烟，确认专用账号下的上下文、
    真实修改与缺少证据仍阻塞；同时在 macOS/POSIX 复验 P08。
-5. 下一实现单元为 P09：接入必需验证、基线和版本化 Evidence，核实/扩展沙箱所需能力。
-   保留上述未验证项，不提前声称阶段 DONE。
+5. P09 验证、基线、最终重跑及 Evidence 查询已接入；继续解决 Windows Python 私有临时目录
+   的 LPAC 兼容能力，补 macOS 实测及其他必需验证能力。不得以扩大宿主权限或改写运行时语义绕过。
+   保留上述未验证项与严格 xfail，不提前声称阶段 DONE；P10 尚未开始。
    Claude Code、Pi 需要先证明相同工具边界和留痕能力，不能直接开启不受控的原生工具。

@@ -8,12 +8,14 @@ from typing import Literal
 
 from ..context.coder import build_context
 from ..core.knowledge import KnowledgeSnapshot
-from ..core.models import DomainModel, Evidence, EvidenceStatus, TaskSpec
+from ..core.models import DomainModel, Evidence, EvidenceStatus, ScopePolicy, TaskSpec
 from ..core.planning import PlanVersion
 from ..core.tools import Shell
+from ..core.verification import VerificationSettings
 from ..core.workflow import (
     CoderResult,
     PlanApproval,
+    QualityGate,
     ReviewResult,
     Revision,
     RunSpec,
@@ -29,6 +31,7 @@ from ..session.records import Sanitizer, inspect_journal
 from ..tools.execution import ExecutionRuntime
 from ..tools.initialization import EXCLUDED
 from ..tools.runtime import ToolRuntime
+from ..tools.verification import VerificationRunner
 from .initialization import initialize
 from .planning import inspect_plan, run_spec
 
@@ -67,13 +70,11 @@ class RunResult(DomainModel):
     worktree: str | None = None
     workflow: WorkflowResult | None = None
     requirement_complete: Literal[False] = False
+    baseline: VerificationResult | None = None
+    final_verification: VerificationResult | None = None
 
 
 class _UnavailableStages:
-    async def verify(self, task: TaskSpec, revision: Revision) -> VerificationResult:
-        # No execution happened; absent evidence must remain absent.
-        return VerificationResult(evidence=())
-
     async def review(
         self, task: TaskSpec, revision: Revision, evidence: tuple[Evidence, ...]
     ) -> ReviewResult:
@@ -173,13 +174,30 @@ class _SessionCoder:
         return result
 
 
-def execution_spec(plan: PlanVersion, config: CodexSettings, directory: Path) -> RunSpec:
-    identity = config.model_dump_json() + "\n" + str(directory)
+def execution_spec(
+    plan: PlanVersion,
+    config: CodexSettings,
+    directory: Path,
+    verification: VerificationSettings | None = None,
+) -> RunSpec:
+    verification = verification or VerificationSettings()
+    identity = config.model_dump_json() + "\n" + str(directory) + verification.model_dump_json()
+    global_task = TaskSpec(
+        id="requirement-verification",
+        title="Requirement verification",
+        goal=plan.original_request,
+        scope=ScopePolicy(forbidden=plan.settings.scope.forbidden),
+        requirements=plan.draft.requirement.functional_requirements,
+        acceptance=plan.draft.acceptance,
+        risk=plan.draft.requirement.risk,
+        permissions=plan.settings.permissions,
+    )
     return RunSpec.model_validate(
         run_spec(plan).model_dump()
         | {
             "session_id": "run-" + plan.plan_id,
             "executor_revision": sha256(identity.encode()).hexdigest(),
+            "verification_tasks": (global_task,),
         }
     )
 
@@ -191,6 +209,7 @@ async def run(
     workspace: Path,
     approve: str | None = None,
     secrets: tuple[str, ...] = (),
+    verification: VerificationSettings | None = None,
 ) -> RunResult:
     root = root.resolve(strict=True)
     try:
@@ -207,11 +226,6 @@ async def run(
     plan = inspection.plan
     if inspection.status != "proposed":
         return RunResult(status=inspection.status, reason="; ".join(inspection.blockers))
-    if plan.draft.refactor or plan.draft.baseline_check_ids:
-        return RunResult(
-            status="blocked",
-            reason="Required baseline verification is not configured; implementation is blocked.",
-        )
     graph = run_spec(plan).graph
     if any(t.scope.forbidden != plan.settings.scope.forbidden for t in graph.tasks):
         return RunResult(
@@ -225,8 +239,16 @@ async def run(
             raise ValueError("Codex executable/profile must be absolute and canonical")
         if path.is_relative_to(root) or path.is_relative_to(workspace):
             raise ValueError("Codex executable/profile must be outside source and workspace")
+    verification = VerificationSettings.model_validate(verification or {})
+    for path in verification.runtime_roots:
+        if not path.is_absolute() or path.resolve(strict=True) != path or not path.is_dir():
+            raise ValueError("verification runtime roots must be canonical absolute directories")
+        if any(
+            path.is_relative_to(p) or p.is_relative_to(path) for p in (root, workspace, config.home)
+        ):
+            raise ValueError("verification runtime roots must be separate from project and profile")
     managed = Workspace(root, workspace, plan.settings.scope, excluded=EXCLUDED)
-    spec = execution_spec(plan, config, workspace)
+    spec = execution_spec(plan, config, workspace, verification)
     if approve != spec.fingerprint:
         return RunResult(
             status="approval_required",
@@ -292,16 +314,70 @@ async def run(
             )
         coder = _SessionCoder(owner, plan, knowledge, spec, approval, managed, config, guard)
         unavailable = _UnavailableStages()
+
+        def verification_runtime(task_id: str) -> ToolRuntime:
+            return ToolRuntime(
+                spec,
+                task_id,
+                root=managed.path,
+                journal=owner.journal,
+                approval=approval,
+                workspace=managed,
+                guard=guard,
+            )
+
+        verifier = VerificationRunner(owner, verification, verification_runtime)
+        baseline = final_verification = None
+        global_task = spec.verification_tasks[0]
         engine = WorkflowEngine(
             spec,
             coder=coder,
-            verifier=unavailable,
+            verifier=verifier,
             reviewer=unavailable,
             read_revision=runtime.read_revision,
             writer=owner.journal,
         )
         try:
+            if plan.draft.baseline_check_ids:
+                baseline = await verifier.check(
+                    global_task,
+                    runtime.read_revision(),
+                    phase="baseline",
+                    check_ids=plan.draft.baseline_check_ids,
+                )
+                expected = {c for c in plan.draft.baseline_check_ids}
+                if (
+                    not baseline.evidence
+                    or {e.check_id for e in baseline.evidence} != expected
+                    or any(not e.passed for e in baseline.evidence)
+                ):
+                    owner.record("execution_blocked", baseline, runtime.read_revision())
+                    return RunResult(
+                        status="blocked",
+                        reason="Required baseline checks did not pass",
+                        fingerprint=spec.fingerprint,
+                        session_id=spec.session_id,
+                        journal=str(owner.journal.directory / "events.jsonl"),
+                        worktree=str(managed.path),
+                        baseline=baseline,
+                    )
             result = await engine.run(approval)
+            status, reason = result.outcome, result.reason
+            if result.outcome == "tasks_verified":
+                final_revision = runtime.read_revision()
+                records: list[Evidence] = []
+                gate = QualityGate()
+                for task in (*spec.graph.tasks, global_task):
+                    checked = await verifier.check(task, final_revision, phase="final")
+                    records.extend(checked.evidence)
+                    if not gate.verification(
+                        task, runtime.read_revision(), checked.evidence
+                    ).passed:
+                        status, reason = (
+                            "blocked",
+                            "Required final-snapshot verification did not pass",
+                        )
+                final_verification = VerificationResult(evidence=tuple(records))
         finally:
             # Stop new side effects if a request/result pair or journal is unavailable.
             owner.journal.check_writable()
@@ -312,11 +388,13 @@ async def run(
                 if recorded.status != "succeeded":
                     raise ValueError("final inspection failed; retain workspace and journal")
         return RunResult(
-            status=result.outcome,
-            reason=result.reason,
+            status=status,
+            reason=reason,
             fingerprint=spec.fingerprint,
             session_id=spec.session_id,
             journal=str(owner.journal.directory / "events.jsonl"),
             worktree=str(managed.path),
             workflow=result,
+            baseline=baseline,
+            final_verification=final_verification,
         )

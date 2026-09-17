@@ -34,6 +34,7 @@ class Revision(DomainModel):
 class RunSpec(DomainModel):
     session_id: Identifier
     graph: TaskGraph
+    verification_tasks: tuple[TaskSpec, ...] = ()
     revision: Revision
     mode: WorkflowMode = WorkflowMode.STANDARD
     plan_revision: NonEmptyStr | None = None
@@ -44,6 +45,13 @@ class RunSpec(DomainModel):
     max_review_fixes: Annotated[int, Field(strict=True, ge=0)] = 2
     max_total_attempts: PositiveInt = 30
     worker_timeout_seconds: Annotated[float, Field(strict=True, gt=0, allow_inf_nan=False)] = 60.0
+
+    @model_validator(mode="after")
+    def unique_verification_tasks(self) -> "RunSpec":
+        ids = [task.id for task in (*self.graph.tasks, *self.verification_tasks)]
+        if len(ids) != len(set(ids)):
+            raise ValueError("verification and business task IDs must be distinct")
+        return self
 
     @property
     def fingerprint(self) -> str:
