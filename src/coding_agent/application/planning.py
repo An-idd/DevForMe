@@ -59,6 +59,8 @@ def run_spec(plan: PlanVersion) -> RunSpec:
         mode=WorkflowMode(plan.settings.mode),
         max_review_fixes=plan.settings.max_review_fixes,
         max_total_attempts=plan.settings.max_total_attempts,
+        max_tool_calls=plan.settings.max_tool_calls,
+        max_model_calls=plan.settings.max_model_calls,
         worker_timeout_seconds=plan.settings.worker_timeout_seconds,
         plan_revision=plan.revision,
         pending_milestones=plan.pending_milestones,
@@ -144,6 +146,8 @@ def render_plan(plan: PlanVersion) -> str:
             + (", ".join(draft.invariant_criterion_ids) or "not a declared refactor"),
             "Baseline checks (not run): " + (", ".join(draft.baseline_check_ids) or "none"),
             f"Attempt limit: {plan.settings.max_total_attempts}; "
+            f"tool request limit: {plan.settings.max_tool_calls}; "
+            f"model segment limit: {plan.settings.max_model_calls}; "
             "no execution budget consumed by planning.",
             "",
             "## Blockers",

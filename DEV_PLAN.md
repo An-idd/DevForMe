@@ -1284,7 +1284,75 @@ P10 保持 IN_PROGRESS：代表性项目质量、macOS、真实 Codex 全链路�
 提交检查发现 core.autocrlf=true 会改变规则包字节；新增 .gitattributes 固定 rules.json 为 LF，
 验证暂存内容及 Windows Git 检出后的 SHA-256 与固定摘要一致。
 
+### 8.16 AutoResearch X 渠道真实对照评估（2026-09-17）
+
+用户授权在独立基线副本使用真实 Codex + GLM 评估，原 AutoResearch 修改未改写。
+完整报告见 [AUTORESEARCH_X_EVALUATION.md](AUTORESEARCH_X_EVALUATION.md)。
+
+原版运行 19.97 秒，Codex invalid_response，尚未修改代码。Schema 检查发现可空 replan 未列入
+required；复用已有 OpenAI SDK 严格 Schema 转换，补充实际 CLI 请求断言，无新依赖。
+定向 Codex 协议测试 55 passed，Ruff check/format、mypy（65 个源码文件）通过。
+修复后独立复验保持需求、预算和权限，24.56 秒后 blocked：模型报告 code-mode host is disabled，
+没有动态工具调用/patch。真实合成冒烟也受阻；未放开原生工具或进程权限。
+两轮日志各 40 条事件，均无未配对请求；工作流未进入验证或 GLM 审查。
+
+Windows 基线 pytest 预检在 AnyIO 插件导入 asyncio/_overlapped 时 WinError 10013，
+不能计为测试通过；与已有私有临时目录 0700 问题分别保留。
+宿主基线 85 passed、参考实现 106 passed，Ruff/compileall/secret_scan 通过，均非产品 Evidence。
+另做一次真实 GLM 参考实现只读评估：无 blocking/major，但必审路径拼写错误，
+覆盖校验不通过，不能采纳模型 passed；没有转化为工作流成功证据。
+已知用量 150038 token（含修复后 Codex 业务任务/合成冒烟和 GLM），两次失败调用用量未知，
+参考实现开发成本未知，不能作成本或质量优势结论。
+
+保留全部失败及试验记录，不重置旧会话预算；本次未提交/推送。
+P10 保持 IN_PROGRESS，下一步先解决真实 Codex 工具路由和 Windows 验证兼容，再复验全链路。
+未运行真实 X API 或 macOS；P11/P12 不推进。
+
+### 8.17 兼容 Codex 模型与候选对照（2026-09-17）
+
+本机 Codex 模型目录确认 gpt-6-astra / gpt-5.6 系列要求 code_mode_only；
+保持原权限配置，选择 gpt-5.5 的直接动态工具路径，真实读写冒烟 1 passed（14.61 秒）。
+不等于 gpt-6-astra 的 code-mode 已适配。README 同步实测版本与兼容边界。
+
+同基线第三轮试验使用相同需求、预算和 300 秒时限：304.05 秒超时 blocked，
+6 个文件有实际改动，测试/文档未完成；102 条事件、29 个工具请求、17 个模型调用段，
+日志无未配对请求，未进入工作流验证/审查。保留副本、Diff 和全部失败历史，未重置旧会话。
+
+候选宿主检查 85 passed（原有测试）、Ruff 1 项 E501、compileall/secret_scan 通过。
+相同离线行为探针参考实现 8 passed，候选 2 passed/6 failed，涉及部分错误、数量不符、
+非法身份、空正文、重定向及异常链泄露模拟文本。探针为事后诊断，不是盲测模型排名。
+补充 GLM changes_requested 与主要失败方向一致，但路径覆盖仍不完整，不能成为有效通过证据；
+输入包含已知失败摘要，不声称模型独立发现了全部问题。
+
+Windows 去掉 AnyIO 插件的独立诊断可收集 85 项，但私有目录仍 WinError 5。
+新增 examples/python-asyncio-check.json，复用 required baseline，在 Coder 前阻塞不支持的环境；
+2 项基线测试通过，原私有目录严格 xfail 保留。该改动不修复底层兼容性，不放宽禁网。
+Ruff check/format、Windows/Darwin mypy（65 个源码文件）通过，未重复全仓 pytest。
+
+详细事实与工件见 AUTORESEARCH_X_EVALUATION.md 第 9 节。
+累计已知 182698 token，不含失败无用量及超时业务任务；不作成本优势结论。
+原项目摘要一致；未提交/推送。P10 保持 IN_PROGRESS，先处理 Windows 验证与计划预算再复验。
+
+### 8.18 计划调用预算与 Windows 后端路线（2026-09-17）
+
+PlanSettings 新增 max_tool_calls / max_model_calls，agent plan 对应参数默认 30 / 31，
+正整数校验、持久化、摘要与 RunSpec 编译已接通，非默认值绑定审批指纹。
+默认字段不写入序列化，保留旧计划指纹；3 份真实评估历史计划指纹逐一一致。
+沿用修订不能改变预算的限制，不修改任何旧会话预算，不实现 P11 恢复。
+计划/执行检查 86 passed；工具/模型耗尽用例改为使用保存计划中的额度，2 passed。
+完整 pytest：919 passed、26 skipped、1 xfailed（435.40 秒），跳过不计通过，
+Windows 私有临时目录严格 xfail 保留。Ruff check/format、Windows/Darwin mypy
+（65 个源码文件）、git diff --check 均通过；未重跑真实模型或宣称业务全链路通过。
+
+Windows 方案见 WINDOWS_VERIFICATION_PROPOSAL.md，Docker 后端尚未选择、实现或安装。
+CPython 3.12.10 的 0700 mkdir 使用受保护且不继承父目录的 ACL；原 LPAC 阻塞保留。
+额外原生 ACL 对照探针分别在 ctypes 导入和 MinGW 程序启动时失败，未取得 ACL 对照结果。
+P10 仍为 IN_PROGRESS；原项目不改写，本轮未提交/推送。
+
 ## 9. 下一步执行单元
+
+当前安排（2026-09-17）：按用户要求暂停 Windows 适配，列为下方 TODO。
+此前开发记录中的 Windows 优先推进顺序已被本安排替代；后续“继续”不自动恢复该项。
 
 1. P06 真实探索需在代表性项目上显式运行 agent init PATH --refresh --model MODEL 并核查来源质量。
    在专用 CODEX_HOME 登录，配置 CODING_AGENT_CODEX_HOME / CODING_AGENT_CODEX_MODEL，
@@ -1293,10 +1361,25 @@ P10 保持 IN_PROGRESS：代表性项目质量、macOS、真实 Codex 全链路�
 2. 用代表性项目显式执行 agent plan --model MODEL，人工核对需求覆盖、风险/复杂度、
    来源规则、当前任务与后续里程碑；离线 Schema 测试不能代替真实计划质量验收。
 3. 在 macOS/POSIX 复验 P03/P04、共享记录、Codex 进程管理及 P06/P07 初始化/计划流程。
-   Windows WMI 诊断尚未定位；后续真实模型/SDK 平台查询时继续观察并保留实际结果。
+   Windows WMI 诊断并入暂停 TODO，保留现有未定位记录。
 4. 显式运行 CODING_AGENT_RUN_LIVE=1 对应的 P08 应用冒烟，确认专用账号下的上下文、
    真实修改与缺少证据仍阻塞；同时在 macOS/POSIX 复验 P08。
-5. P09 验证、基线、最终重跑及 Evidence 查询已接入；继续解决 Windows Python 私有临时目录
-   的 LPAC 兼容能力，补 macOS 实测及其他必需验证能力。不得以扩大宿主权限或改写运行时语义绕过。
+5. P09 验证、基线、最终重跑及 Evidence 查询已接入；后续补 macOS 实测及其他非 Windows 必需验证能力。
+   Windows 验证适配按下方 TODO 暂停。不得以扩大宿主权限或改写运行时语义绕过。
    保留上述未验证项与严格 xfail，不提前声称阶段 DONE；P10 已接入独立审查，仍需真实模型质量与 macOS 原生验收。
    Claude Code、Pi 需要先证明相同工具边界和留痕能力，不能直接开启不受控的原生工具。
+
+
+### 9.1 TODO：Windows 验证适配（已暂停）
+
+- [ ] 恢复条件：用户明确要求恢复 Windows 工作；普通“继续”不视为恢复。
+- [ ] 处理 LPAC 下 asyncio/_overlapped 导入失败（WinError 10013）。
+- [ ] 处理 Python 0700 私有临时目录权限失败（WinError 5），保留严格 xfail。
+- [ ] 恢复后再选择原生 LPAC 或可选 Docker 验证后端，明确网络隔离语义并完成真实验收。
+      [Windows 方案](WINDOWS_VERIFICATION_PROPOSAL.md)仅保留为候选；当前不再等待路线选择，
+      不开发该后端、不安装 Docker/WSL 等系统组件。
+- [ ] Windows WMI 诊断及其他原生兼容性复验一并暂停。
+- [ ] 环境能力通过后，再恢复依赖该环境的 AutoResearch 真实 Codex + GLM 全链路复验。
+
+暂停不删除既有实现、测试、失败记录或验收要求；Windows 全链路仍未通过，
+P10 保持 IN_PROGRESS。与 Windows 无关的工作可继续按阶段依赖推进。

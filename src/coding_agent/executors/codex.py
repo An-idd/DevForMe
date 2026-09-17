@@ -13,6 +13,7 @@ from tempfile import TemporaryDirectory
 from typing import Annotated, Literal
 from uuid import uuid4
 
+from openai import pydantic_function_tool
 from pydantic import BaseModel, Field
 
 from ..context.coder import TaskContextPack
@@ -181,7 +182,7 @@ class _CodexBridge:
                         "text": json.dumps([m.model_dump(mode="json") for m in messages]),
                     }
                 ],
-                "outputSchema": CoderResult.model_json_schema(),
+                "outputSchema": pydantic_function_tool(CoderResult)["function"]["parameters"],
             },
         )
         self._turn = turn["turn"]["id"]

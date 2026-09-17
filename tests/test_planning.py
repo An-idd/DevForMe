@@ -1,6 +1,7 @@
 import asyncio
 import json
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from coding_agent.core.planning import (
     PlanningOperation,
     PlanningRevision,
     PlanSettings,
+    PlanVersion,
     RequirementCoverage,
     applicable_rules,
     validate_draft,
@@ -459,12 +461,22 @@ def test_inspection_commands_are_read_only_and_do_not_initialize(tmp_path, proje
     assert {str(p): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
 
 
-def test_cli_offline_draft_and_missing_model_configuration(project, capsys):
+@pytest.mark.parametrize("budgets", [[], ["--max-tool-calls", "80", "--max-model-calls", "90"]])
+def test_cli_offline_draft_and_missing_model_configuration(project, capsys, budgets):
     root, _, draft = project
     (root / "draft.json").write_text(draft.model_dump_json())
-    assert main(["plan", "--path", str(root), "--draft", "draft.json", "--refresh", "--json"]) == 0
+    assert (
+        main(
+            ["plan", "--path", str(root), "--draft", "draft.json", "--refresh", "--json", *budgets]
+        )
+        == 0
+    )
     result = json.loads(capsys.readouterr().out)
     assert result["status"] == "proposed" and result["plan"]["version"] == 1
+    saved = inspect_plan(root).plan
+    assert run_spec(saved).max_tool_calls == (80 if budgets else 30)
+    assert run_spec(saved).max_model_calls == (90 if budgets else 31)
+    assert f"tool request limit: {run_spec(saved).max_tool_calls}" in result["summary"]
 
 
 def test_plan_operation_is_not_an_agent_capability(project, make_task):
@@ -635,3 +647,48 @@ def test_import_rejects_credentials_before_archiving_original(project):
         asyncio.run(plan(root, import_path=".agent/" + name, new_plan=True))
     assert not list((root / ".agent").glob("imported-plan-*.json"))
     assert "example-private-value" in source.read_text()
+
+
+@pytest.mark.parametrize("field", ["max_tool_calls", "max_model_calls"])
+@pytest.mark.parametrize("value", [0, -1, True, 1.5])
+def test_plan_call_budgets_require_positive_integers(field, value):
+    with pytest.raises(ValueError):
+        PlanSettings.model_validate({field: value})
+
+
+def test_legacy_plan_serialization_and_revision_are_preserved(project):
+    settings = PlanSettings()
+    assert sha256(settings.model_dump_json().encode()).hexdigest() == (
+        "7442b324d2ab187a2e71fb4d76165d0dd15a76c34427d08556e226905920848c"
+    )
+    saved = run(project).plan
+    data = saved.model_dump(mode="json")
+    assert "max_tool_calls" not in data["settings"]
+    assert "max_model_calls" not in data["settings"]
+    legacy_json = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    loaded = PlanVersion.model_validate_json(legacy_json)
+    assert loaded.model_dump_json() == legacy_json
+    assert loaded.revision == sha256(legacy_json.encode()).hexdigest()
+    assert run_spec(loaded).max_tool_calls == 30
+    assert run_spec(loaded).max_model_calls == 31
+
+
+@pytest.mark.parametrize("field", ["max_tool_calls", "max_model_calls"])
+def test_call_budgets_bind_approval_and_cannot_change_in_revision(project, field):
+    saved = run(project).plan
+    spec = run_spec(saved)
+    approval = PlanApproval(
+        session_id=saved.plan_id,
+        plan_fingerprint=spec.fingerprint,
+        source="user",
+        timestamp=datetime.now(UTC),
+    )
+    settings = PlanSettings.model_validate({field: 70})
+    changed = PlanVersion.model_validate(saved.model_dump() | {"settings": settings})
+    loaded = PlanVersion.model_validate_json(changed.model_dump_json())
+    assert getattr(run_spec(loaded), field) == 70
+    assert loaded.revision != saved.revision
+    assert not approval.covers(run_spec(loaded))
+    with pytest.raises(ValueError, match="boundaries or budgets"):
+        run(project, settings=settings, reason="Increase execution budget")
+    assert inspect_plan(project[0]).plan.revision == saved.revision

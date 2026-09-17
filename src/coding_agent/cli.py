@@ -70,6 +70,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     planning.add_argument("--mode", choices=("fast", "standard", "strict"), default="standard")
     planning.add_argument("--max-attempts", type=int, default=30)
+    planning.add_argument("--max-tool-calls", type=int, default=30)
+    planning.add_argument("--max-model-calls", type=int, default=31)
     planning.add_argument("--model", help="Opt in to one recorded Planner call")
     planning.add_argument("--json", action="store_true")
     for name in ("status", "graph"):
@@ -192,6 +194,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     scope=ScopePolicy(allowed=tuple(args.allow), forbidden=tuple(args.forbid)),
                     mode=args.mode,
                     max_total_attempts=args.max_attempts,
+                    max_tool_calls=args.max_tool_calls,
+                    max_model_calls=args.max_model_calls,
                 ),
                 focus=tuple(args.focus),
                 refresh=args.refresh,

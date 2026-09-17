@@ -496,10 +496,11 @@ def test_windows_verification_python_private_directory(windows_harness):
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="real Windows capability baseline")
-def test_private_temp_capability_blocks_before_coder(planned, scripted, python_runtime):
+@pytest.mark.parametrize("probe_name", ["python-private-temp", "python-asyncio"])
+def test_runtime_capability_blocks_before_coder(planned, scripted, python_runtime, probe_name):
     root, _, saved, _, _ = planned
     probe = json.loads(
-        (Path(__file__).parents[1] / "examples/python-private-temp-check.json").read_text(
+        (Path(__file__).parents[1] / f"examples/{probe_name}-check.json").read_text(
             encoding="utf-8"
         )
     )
@@ -509,7 +510,10 @@ def test_private_temp_capability_blocks_before_coder(planned, scripted, python_r
     raw["baseline_check_ids"] = [probe["id"]]
     updated = asyncio.run(
         plan(
-            root, draft=PlanDraft.model_validate(raw), new_plan=True, reason="Require private temp"
+            root,
+            draft=PlanDraft.model_validate(raw),
+            new_plan=True,
+            reason=f"Require {probe_name} capability",
         )
     ).plan
     assert not updated.draft.refactor
@@ -517,7 +521,7 @@ def test_private_temp_capability_blocks_before_coder(planned, scripted, python_r
     settings = VerificationSettings(runtime_roots=(python_runtime,))
     outcome = run(planned, settings, approve=run(planned, settings).fingerprint)
     assert outcome.status == "blocked" and not scripted[1]
-    assert "python-private-temp (unavailable)" in outcome.reason
+    assert f"{probe['id']} (unavailable)" in outcome.reason
     ledger = inspect_evidence(root)
     assert ledger.status == "recorded" and len(ledger.checks) == 1
     record = ledger.checks[0].record

@@ -5,7 +5,13 @@ from pathlib import PurePosixPath
 from typing import Annotated, Literal, Self
 from unicodedata import normalize
 
-from pydantic import Field, StrictBool, model_validator
+from pydantic import (
+    Field,
+    SerializerFunctionWrapHandler,
+    StrictBool,
+    model_serializer,
+    model_validator,
+)
 
 from .graph import TaskGraph
 from .knowledge import Digest, KnowledgeSnapshot, OpenQuestion, RepoSummary, SourceReference, Text
@@ -157,8 +163,20 @@ class PlanSettings(DomainModel):
     permissions: PermissionPolicy = PermissionPolicy(shell="restricted")
     mode: Literal["fast", "standard", "strict"] = "standard"
     max_total_attempts: PositiveInt = 30
+    max_tool_calls: PositiveInt = 30
+    max_model_calls: PositiveInt = 31
     max_review_fixes: Annotated[int, Field(strict=True, ge=0)] = 2
     worker_timeout_seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)] = 60.0
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
+        # Keep pre-budget plan revisions and existing approvals valid at legacy defaults.
+        data: dict[str, object] = handler(self)
+        if self.max_tool_calls == 30:
+            data.pop("max_tool_calls", None)
+        if self.max_model_calls == 31:
+            data.pop("max_model_calls", None)
+        return data
 
 
 class PlanVersion(DomainModel):

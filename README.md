@@ -151,6 +151,12 @@ glm-5.3 按用户指定保留；尚未验证账号上的模型可用性或执行
 当前任务依赖和后续里程碑。任务写入范围必须列出具体文件，不能使用通配符；
 重叠写入必须有依赖顺序。--allow 可限定提案的最大写入范围，--forbid 禁止读取相关路径，
 --mode 选择工作流模式，--max-attempts 限制当前任务的尝试分配；Small 不能降低高风险检查。
+新计划可用 --max-tool-calls / --max-model-calls 配置整次执行的工具请求与模型调用段上限，
+默认分别为 30 / 31，均须为正整数。例如在 agent plan 的参数中加入
+--max-tool-calls 80 --max-model-calls 90；这些数字只是配置示例，不保证任务能在额度内完成。
+额度保存在 PlanSettings、显示于计划摘要，并绑定执行审批指纹。模型调用段不是 token 或金额预算。
+旧计划缺省这两个字段时仍使用 30 / 31，保持原序列化和指纹；修改既有计划预算仍被拒绝，
+不能通过重跑或修订静默补充额度。Coder 每次调用的工具/时间限制仍单独生效。
 现有目标源码尚未读取时保存 blocked 提案，提示通过 --focus 补充探索。
 这些结构检查不等于证明模型理解完整或验收充分，提案仍需用户审阅。
 
@@ -229,7 +235,18 @@ Python 目录需包含可独立运行的 python.exe、DLL、Lib/DLLs 与所需 s
 P10 审查质量验收、P11 跨批次协调及 P12 交付仍待完成；requirement_complete 始终为 false。
 Windows 验证使用临时测试项目和离线 Coder；真实账号与 macOS/POSIX 的待验收项见 DEV_PLAN。
 
-### Windows 私有临时目录前置检查
+### 已实测的 Codex 模型兼容性
+
+固定 CLI 0.154.0-alpha.6.2 的直接动态工具路径已通过真实 `gpt-5.5`
+读文件 → Patch 冒烟（2026-09-17）。配置 `CODING_AGENT_CODEX_MODEL=gpt-5.5`
+可选择该路径；该结果不代表复杂业务任务或全链路验收通过。
+
+同日本机模型目录将 `gpt-6-astra`、`gpt-5.6-sol/terra/luna` 标为
+`tool_mode=code_mode_only`，与当前禁用 code-mode host 的 adapter 不兼容。
+不能直接开启该宿主：其进程生命周期、工具边界和留痕仍需适配验证。
+模型能力会变化，以上结论仅针对已测 CLI/模型目录，不保证其他版本或账号可用。
+
+### Windows 验证能力前置检查
 
 如果计划中的测试或构建依赖 Python 私有临时目录，可把
 [单次能力探测模板](examples/python-private-temp-check.json) 纳入首次计划草稿：
@@ -237,6 +254,13 @@ Windows 验证使用临时测试项目和离线 Coder；真实账号与 macOS/PO
 1. 把模板作为一项检查加入需求级 acceptance.checks。
 2. 把 python-private-temp 加入相关 criterion 的 required_check_ids，保留原有业务检查。
 3. 把同一 ID 加入 baseline_check_ids；普通功能开发也支持基线，不必标为 refactor。
+
+若项目或 pytest 插件依赖 asyncio，还应同样加入
+[asyncio 导入探针](examples/python-asyncio-check.json)，其 ID 为 `python-asyncio-import`。
+Python 在 Windows 导入 `_overlapped` 时会创建套接字；当前无网络能力的 LPAC
+会返回 WinError 10013，导致 AnyIO pytest 插件在收集测试前失败。
+探针会将该问题作为 unavailable 基线在编码前暴露，不自动禁用插件或改变禁网规则。
+去掉无关插件能否运行必须单独验证；私有临时目录障碍仍然存在。
 
 模板是单个 AcceptanceCheck，不是可直接传给 --draft 的完整 PlanDraft。
 请在规划阶段合入完整草稿并审阅；已有计划的验收变更仍受 P11 未实现的限制，
@@ -686,7 +710,7 @@ Reviewer 的供应商、模型/生成配置、端点摘要及规则包身份参�
 - review_context_built、ModelRuntime 请求/结果和 review_recorded 保存输入、结果及引用；
   后者记录 task/final 阶段和上下文摘要。记录失败停止，取消保留中断记录。
   审查与 Coder/Verifier 共用既有工具和模型预算，额度不因重审或修复重置；
-  默认额度可能不足以覆盖较大项目，预算不足时阻塞。
+  默认额度可能不足以覆盖较大项目，可在创建计划时配置 --max-tool-calls / --max-model-calls；预算不足时阻塞。
 
 当前已通过模拟模型回归及 Windows 上 glm-5.3 的有限真实冒烟：
 正常改动通过三次审查，明确的返回值回归在测试通过时仍被阻止。

@@ -1,0 +1,10 @@
+{
+  "id": "python-asyncio-import",
+  "description": "Python can import asyncio in the declared verification sandbox",
+  "evidence_type": "command",
+  "command": [
+    "python",
+    "-c",
+    "import asyncio; print('asyncio import capability available')"
+  ]
+}

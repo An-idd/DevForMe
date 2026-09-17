@@ -12,7 +12,7 @@ from test_planning import project as project
 from coding_agent.application import execution
 from coding_agent.application.planning import plan
 from coding_agent.cli import main
-from coding_agent.core.planning import PlanDraft
+from coding_agent.core.planning import PlanDraft, PlanSettings
 from coding_agent.core.tools import Patch, ToolRequest
 from coding_agent.core.workflow import CoderResult, EventWriteError, RunSpec
 from coding_agent.executors.codex import CodexSettings
@@ -21,9 +21,9 @@ from coding_agent.tools.execution import inspect_execution, read_artifact
 
 
 @pytest.fixture
-def planned(project, tmp_path):
+def planned(project, tmp_path, request):
     root, knowledge, draft = project
-    saved = asyncio.run(plan(root, draft=draft)).plan
+    saved = asyncio.run(plan(root, draft=draft, settings=getattr(request, "param", None))).plan
     config = CodexSettings(
         executable=Path(sys.executable).resolve(),
         home=tmp_path / "dedicated-profile",
@@ -263,13 +263,8 @@ def test_result_write_failure_retains_lock_and_stops_followup_tools(planned, scr
     assert len(list(planned[-1].glob("*/service.py"))) == 1
 
 
-def test_session_budget_includes_context_reads(planned, scripted, monkeypatch):
-    original = execution.execution_spec
-
-    def limited(*args):
-        return RunSpec.model_validate(original(*args).model_dump() | {"max_tool_calls": 1})
-
-    monkeypatch.setattr(execution, "execution_spec", limited)
+@pytest.mark.parametrize("planned", [PlanSettings(max_tool_calls=1)], indirect=True)
+def test_session_budget_includes_context_reads(planned, scripted):
     result = run(planned, approve=run(planned).fingerprint)
     assert result.status == "blocked" and not scripted[1]
     tools = [e.tool_result for e in inspect_execution(planned[0]).records.events if e.tool_result]
@@ -305,17 +300,8 @@ def test_native_codex_receives_context_and_actual_patch_is_not_verified(planned,
     assert len([e for e in view.records.events if e.model_request]) == 2
 
 
-def test_session_model_budget_stops_continuation_without_discarding_patch(
-    planned, codex_server, monkeypatch
-):
-    original = execution.execution_spec
-    monkeypatch.setattr(
-        execution,
-        "execution_spec",
-        lambda *a: RunSpec.model_validate(
-            original(*a).model_dump() | {"max_model_calls": 1},
-        ),
-    )
+@pytest.mark.parametrize("planned", [PlanSettings(max_model_calls=1)], indirect=True)
+def test_session_model_budget_stops_continuation_without_discarding_patch(planned, codex_server):
     executable, batches, requests = codex_server
     root, knowledge, saved, config, directory = planned
     native = (

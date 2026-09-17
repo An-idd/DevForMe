@@ -646,7 +646,7 @@ inventing tasks or acceptance. The default model path interprets free text while
 preserving the original goal verbatim; a supplied RequirementContract must match
 exactly. Public CLI: agent plan [request] --path ROOT, --model MODEL,
 --requirement FILE, --draft FILE, --import FILE, --refresh, --focus, --forbid,
---allow, --mode, --max-attempts, --reason and --new. Source files are relative to
+--allow, --mode, --max-attempts, --max-tool-calls, --max-model-calls, --reason and --new. Source files are relative to
 ROOT; explicit immutable .agent/plan-<id>-v<N>.json imports are controller reads,
 not a general escape from the protected-directory boundary.
 
@@ -2687,6 +2687,13 @@ request; an Agent response is never an approval.
 
 RunSpec adds executor_revision (a digest of Codex configuration and workspace location),
 max_tool_calls=30 and max_model_calls=31. These participate in the approval fingerprint.
+PlanSettings exposes the same positive-integer limits; agent plan accepts --max-tool-calls
+and --max-model-calls and renders both in the reviewable summary. Application compilation
+carries them into RunSpec without overrides at execution time. Legacy defaults are omitted
+from PlanSettings serialization to preserve existing plan revisions and approvals; absent
+fields still mean 30/31. Non-default values are persisted and affect the plan revision.
+Existing revision rules reject changes to budgets; this does not implement P11 budget
+reconciliation, automatic replenishment or changes to adapter per-attempt/time limits.
 Journal counters derive from durably recorded requests, including failed/interrupted
 calls, and are shared across Coder instances. Context reads consume the tool allowance;
 a final denied request is still recorded. Controller snapshot/diff operations are not
@@ -4090,3 +4097,19 @@ The resulting architecture should therefore look like:
 The project is not trying to make an LLM more autonomous.
 
 The project is trying to make **AI software engineering more reliable**.
+
+
+### P10 evaluation compatibility findings (2026-09-17)
+
+The fixed Codex 0.154.0-alpha.6.2 direct dynamic-tool path passed a real gpt-5.5
+read/patch smoke. The locally advertised gpt-6-astra and gpt-5.6 variants require
+code_mode_only and are not supported by the current disabled-host boundary.
+Do not enable that host without validating its process and tool isolation contract.
+
+For Windows plans that depend on asyncio (including pytest's AnyIO plugin), the
+controller can include examples/python-asyncio-check.json as a required baseline.
+It uses the existing planned-check pipeline, records actual capability failure,
+and blocks before Coder; it neither changes Python nor grants network capability.
+This is an explicit optional planning input, not automatic discovery or a repaired
+LPAC compatibility claim. The private-directory baseline remains independently required
+when applicable.

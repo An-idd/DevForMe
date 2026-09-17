@@ -170,6 +170,12 @@ def test_native_codex_round_trip_uses_recorded_tool_runtime(environment, codex_s
     assert result.outcome == "implemented", result.summary
     assert (environment.root / "src/hello.py").read_text() == "print('hello')\n"
     assert len(requests) == 2
+    schema = requests[0]["text"]["format"]["schema"]
+    assert set(schema["required"]) == set(schema["properties"])
+    assert {"type": "null"} in schema["properties"]["replan"]["anyOf"]
+    assert "default" not in schema["properties"]["replan"]
+    nested = schema["$defs"]["ReplanRequest"]
+    assert set(nested["required"]) == set(nested["properties"])
     offered = {t["name"] for t in requests[0]["tools"]}
     assert {
         "verified_read",
