@@ -461,7 +461,9 @@ def test_inspection_commands_are_read_only_and_do_not_initialize(tmp_path, proje
     assert {str(p): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
 
 
-@pytest.mark.parametrize("budgets", [[], ["--max-tool-calls", "80", "--max-model-calls", "90"]])
+@pytest.mark.parametrize(
+    "budgets", [[], ["--max-tool-calls", "80", "--max-model-calls", "90", "--max-replans", "1"]]
+)
 def test_cli_offline_draft_and_missing_model_configuration(project, capsys, budgets):
     root, _, draft = project
     (root / "draft.json").write_text(draft.model_dump_json())
@@ -476,6 +478,7 @@ def test_cli_offline_draft_and_missing_model_configuration(project, capsys, budg
     saved = inspect_plan(root).plan
     assert run_spec(saved).max_tool_calls == (80 if budgets else 30)
     assert run_spec(saved).max_model_calls == (90 if budgets else 31)
+    assert saved.settings.max_replans == (1 if budgets else 2)
     assert f"tool request limit: {run_spec(saved).max_tool_calls}" in result["summary"]
 
 
@@ -692,3 +695,9 @@ def test_call_budgets_bind_approval_and_cannot_change_in_revision(project, field
     with pytest.raises(ValueError, match="boundaries or budgets"):
         run(project, settings=settings, reason="Increase execution budget")
     assert inspect_plan(project[0]).plan.revision == saved.revision
+
+
+@pytest.mark.parametrize("value", [-1, True, 1.5])
+def test_replan_limit_requires_nonnegative_integer(value):
+    with pytest.raises(ValueError):
+        PlanSettings(max_replans=value)

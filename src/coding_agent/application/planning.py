@@ -148,6 +148,7 @@ def render_plan(plan: PlanVersion) -> str:
             f"Attempt limit: {plan.settings.max_total_attempts}; "
             f"tool request limit: {plan.settings.max_tool_calls}; "
             f"model segment limit: {plan.settings.max_model_calls}; "
+            f"replan limit: {plan.settings.max_replans}; "
             "no execution budget consumed by planning.",
             "",
             "## Blockers",

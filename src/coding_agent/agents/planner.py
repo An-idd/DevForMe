@@ -16,6 +16,7 @@ async def propose_plan(
     model: ModelRuntime,
     *,
     previous: PlanVersion | None = None,
+    feedback: str | None = None,
 ) -> PlanDraft:
     response = await model.generate(
         (
@@ -62,7 +63,10 @@ async def propose_plan(
                     "permissions to make a failing check pass. "
                     "Task attempts must fit the session cap; classification changes cannot "
                     "add resources. "
-                    "Preserve old task, criterion and milestone IDs and acceptance on revisions. "
+                    "Preserve criterion/milestone IDs and acceptance on revisions. "
+                    "In live replanning "
+                    "you may split or replace current tasks within their original write scopes "
+                    "and permissions. Keep pending milestones and required questions. "
                     "Necessary unresolved questions have required=true and answer=null; scope"
                     " unknowns "
                     "confined to future work belong to pending milestones. Source quotes must"
@@ -88,6 +92,7 @@ async def propose_plan(
                         },
                         "repository": knowledge.repository.model_dump(mode="json"),
                         "settings": settings.model_dump(mode="json"),
+                        "runtime_feedback": feedback,
                         "previous_plan": previous.model_dump(mode="json") if previous else None,
                     },
                     ensure_ascii=False,

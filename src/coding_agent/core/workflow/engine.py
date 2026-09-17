@@ -11,8 +11,10 @@ from ..state import TaskState
 from .contracts import (
     Coder,
     CoderResult,
+    FailureDiagnosis,
     GateResult,
     PlanApproval,
+    ReplanRequest,
     Reviewer,
     ReviewResult,
     Revision,
@@ -41,6 +43,10 @@ class WorkflowEngine:
         reviewer: Reviewer,
         read_revision: RevisionReader,
         writer: EventWriter,
+        history: tuple[WorkflowEvent, ...] = (),
+        baseline_evidence: tuple[Evidence, ...] = (),
+        initial_purpose: Literal["implement", "debug", "review_fix"] = "implement",
+        initial_feedback: tuple[str, ...] = (),
     ) -> None:
         self._spec = RunSpec.model_validate(spec)
         self._coder = coder
@@ -54,6 +60,20 @@ class WorkflowEngine:
         self._states = {task.id: TaskState.PENDING for task in self._spec.graph.tasks}
         self._attempts = dict.fromkeys(self._states, 0)
         self._review_fixes = dict.fromkeys(self._states, 0)
+        if any(event.session_id != spec.session_id for event in history):
+            raise ValueError("workflow history belongs to another session")
+        starts = [event for event in history if event.kind == "coder_started"]
+        for task_id in self._states:
+            self._attempts[task_id] = sum(e.task_id == task_id for e in starts)
+            self._review_fixes[task_id] = sum(
+                e.task_id == task_id and e.reason.startswith("review_fix attempt ") for e in starts
+            )
+        self._total_attempts = len(starts)
+        self._total_review_fixes = sum(e.reason.startswith("review_fix attempt ") for e in starts)
+        self._baseline = baseline_evidence
+        self._initial_purpose, self._initial_feedback = initial_purpose, initial_feedback
+        self._diagnoses: list[FailureDiagnosis] = []
+        self._replan_request: ReplanRequest | None = None
         self._evidence: list[Evidence] = []
         self._reviews: list[ReviewResult] = []
         self._revision = self._spec.revision
@@ -80,6 +100,7 @@ class WorkflowEngine:
         evidence_ids: tuple[str, ...] = (),
         source: str | None = None,
         coder_result: CoderResult | None = None,
+        diagnosis: FailureDiagnosis | None = None,
     ) -> None:
         sequence = self._writer.next_sequence
         event = WorkflowEvent.model_validate(
@@ -97,6 +118,7 @@ class WorkflowEngine:
                 "evidence_ids": evidence_ids,
                 "source": source,
                 "coder_result": coder_result,
+                "diagnosis": diagnosis,
             }
         )
         try:
@@ -109,7 +131,7 @@ class WorkflowEngine:
     def _attempt_available(self, task: TaskSpec) -> bool:
         return (
             self._attempts[task.id] < task.max_attempts
-            and sum(self._attempts.values()) < self._spec.max_total_attempts
+            and self._total_attempts < self._spec.max_total_attempts
         )
 
     def _move(
@@ -160,6 +182,8 @@ class WorkflowEngine:
                 ),
                 "evidence": tuple(self._evidence),
                 "reviews": tuple(self._reviews),
+                "diagnoses": tuple(self._diagnoses),
+                "replan": self._replan_request,
                 "revision": self._revision,
                 "reason": reason,
                 "pending_milestones": self._spec.pending_milestones,
@@ -210,6 +234,9 @@ class WorkflowEngine:
         except Exception as error:
             # Arbitrary adapter exception messages may contain credentials or raw output.
             reason = f"{type(error).__name__}: adapter failed; reconciliation required"
+            diagnosis = FailureDiagnosis(category="unknown", reason=reason)
+            self._emit("failure_diagnosed", reason, active, diagnosis=diagnosis)
+            self._diagnoses.append(diagnosis)
             self._emit("worker_error", reason, active)
             if active is not None and self._states[active.id] not in _TERMINAL:
                 self._move(active, TaskState.BLOCKED, reason)
@@ -222,6 +249,47 @@ class WorkflowEngine:
         if len(set(ids)) != len(ids) or known.intersection(ids):
             raise ValueError("evidence IDs must be unique across attempts and tasks")
         self._evidence.extend(records)
+
+    def _diagnose(
+        self,
+        task: TaskSpec,
+        gate: GateResult,
+        evidence: tuple[Evidence, ...],
+        *,
+        review: bool = False,
+    ) -> FailureDiagnosis:
+        codes = {issue.code for issue in gate.issues}
+        failed = tuple(e for e in evidence if not e.passed)
+        category: Literal[
+            "code_failure", "pre_existing", "environment", "unknown", "stale", "review"
+        ]
+        if "stale" in codes:
+            category = "stale"
+        elif codes & {"missing", "invalid"}:
+            category = "unknown"
+        elif any(e.status is EvidenceStatus.UNAVAILABLE for e in failed):
+            category = "environment"
+        elif codes - {"failed"}:
+            category = "unknown"
+        elif any(
+            old.status is EvidenceStatus.FAILED
+            and (old.criterion_id, old.check_id, old.command, old.evidence_type, old.result)
+            == (e.criterion_id, e.check_id, e.command, e.evidence_type, e.result)
+            for e in failed
+            for old in self._baseline
+        ):
+            category = "pre_existing"
+        else:
+            category = "review" if review else "code_failure"
+        diagnosis = FailureDiagnosis(
+            category=category,
+            reason="; ".join(i.message for i in gate.issues),
+            evidence_ids=tuple(e.id for e in failed),
+            repair_allowed=category in {"code_failure", "review"},
+        )
+        self._emit("failure_diagnosed", diagnosis.reason, task, diagnosis=diagnosis)
+        self._diagnoses.append(diagnosis)
+        return diagnosis
 
     def _gate_failure(self, task: TaskSpec, result: GateResult) -> str | None:
         """Only definite check failures can trigger code repair."""
@@ -271,8 +339,8 @@ class WorkflowEngine:
         return tuple(records)
 
     async def _execute(self, task: TaskSpec) -> str:
-        purpose: Literal["implement", "debug", "review_fix"] = "implement"
-        feedback: tuple[str, ...] = ()
+        purpose = self._initial_purpose
+        feedback = self._initial_feedback
         while True:
             expected = self._revision
             if self._refresh_revision() != expected or not self._same_plan():
@@ -283,13 +351,22 @@ class WorkflowEngine:
             if not self._attempt_available(task):
                 self._move(task, TaskState.REPLAN_REQUIRED, "attempt budget exhausted")
                 return "attempt budget exhausted"
-            target = TaskState.FIXING if purpose == "review_fix" else TaskState.RUNNING
+            if purpose == "review_fix" and self._total_review_fixes >= self._spec.max_review_fixes:
+                self._move(task, TaskState.REPLAN_REQUIRED, "review repair budget exhausted")
+                return "review repair budget exhausted"
+            target = (
+                TaskState.FIXING
+                if purpose == "review_fix" and self._states[task.id] is TaskState.REVIEWING
+                else TaskState.RUNNING
+            )
             self._move(task, target, purpose)
             attempt = self._attempts[task.id] + 1
             self._emit("coder_started", f"{purpose} attempt {attempt}", task)
             self._attempts[task.id] = attempt
+            self._total_attempts += 1
             if purpose == "review_fix":
                 self._review_fixes[task.id] += 1
+                self._total_review_fixes += 1
             implemented = CoderResult.model_validate(
                 await asyncio.wait_for(
                     self._coder.implement(
@@ -303,6 +380,8 @@ class WorkflowEngine:
             if not self._same_plan():
                 self._move(task, TaskState.REPLAN_REQUIRED, "plan or project knowledge changed")
                 return "plan or project knowledge changed"
+            if implemented.replan is not None:
+                self._replan_request = implemented.replan
             if implemented.outcome != "implemented":
                 self._move(task, TaskState(implemented.outcome.upper()), implemented.summary)
                 return implemented.summary
@@ -332,6 +411,14 @@ class WorkflowEngine:
                 return "revision changed during verification"
             self._emit("gate_evaluated", "verification: " + str(precheck.passed), task)
             if not precheck.passed:
+                diagnosis = self._diagnose(task, precheck, verification.evidence)
+                if diagnosis.category == "pre_existing":
+                    self._move(
+                        task,
+                        TaskState.BLOCKED,
+                        "pre-existing check failure requires reconciliation",
+                    )
+                    return "pre-existing check failure requires reconciliation"
                 if stopped := self._gate_failure(task, precheck):
                     return stopped
                 self._move(task, TaskState.DEBUGGING, "verification failed; bounded repair")
@@ -379,9 +466,10 @@ class WorkflowEngine:
                     task, TaskState.VERIFIED, "required evidence and review passed", decision
                 )
                 return "task verified"
+            self._diagnose(task, decision, verification.evidence, review=True)
             if stopped := self._gate_failure(task, decision):
                 return stopped
-            if self._review_fixes[task.id] >= self._spec.max_review_fixes:
+            if self._total_review_fixes >= self._spec.max_review_fixes:
                 self._move(task, TaskState.REPLAN_REQUIRED, "review repair budget exhausted")
                 return "review repair budget exhausted"
             purpose = "review_fix"

@@ -72,6 +72,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     planning.add_argument("--max-attempts", type=int, default=30)
     planning.add_argument("--max-tool-calls", type=int, default=30)
     planning.add_argument("--max-model-calls", type=int, default=31)
+    planning.add_argument("--max-replans", type=int, default=2)
     planning.add_argument("--model", help="Opt in to one recorded Planner call")
     planning.add_argument("--json", action="store_true")
     for name in ("status", "graph"):
@@ -104,6 +105,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     execution.add_argument(
         "--review-env-file", type=Path, help="Reviewer CODING_AGENT_* configuration"
+    )
+    execution.add_argument(
+        "--replan",
+        action="store_true",
+        help="Opt in to bounded live replanning using the configured review API",
     )
     execution.add_argument("--approve", help="Exact fingerprint printed by run preview")
     execution.add_argument("--json", action="store_true")
@@ -181,7 +187,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             if args.review_model or config:
                 async with model_provider(8192, model=args.review_model) as provider:
-                    return await execute_plan(reviewer=provider, **options)
+                    return await execute_plan(
+                        reviewer=provider, replanner=provider if args.replan else None, **options
+                    )
+            if args.replan:
+                raise ValueError("--replan requires --review-model or --review-env-file")
             return await execute_plan(**options)
         if args.command in {"status", "graph"}:
             return inspect_plan(args.path)
@@ -196,6 +206,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     max_total_attempts=args.max_attempts,
                     max_tool_calls=args.max_tool_calls,
                     max_model_calls=args.max_model_calls,
+                    max_replans=args.max_replans,
                 ),
                 focus=tuple(args.focus),
                 refresh=args.refresh,

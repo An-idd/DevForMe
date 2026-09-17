@@ -243,13 +243,35 @@ class JsonlJournal:
             truncated=truncated,
         )
 
-    def register_plan(self, spec: RunSpec) -> None:
+    def register_plan(self, spec: RunSpec, *, previous: RunSpec | None = None) -> None:
         if spec.session_id != self.session_id:
             raise ValueError("plan belongs to another session")
         if self._registered_plan is not None:
-            if self._registered_plan != spec.fingerprint:
-                raise ValueError("P03 journal cannot silently replace a registered plan")
-            return
+            if self._registered_plan == spec.fingerprint:
+                return
+            if previous is None or self._registered_plan != previous.fingerprint:
+                raise ValueError("journal cannot silently replace a registered plan")
+            self.check_writable()
+            if self._pending or self._active:
+                raise EventWriteError("cannot replan with unresolved operations")
+            fixed = (
+                "session_id",
+                "executor_revision",
+                "mode",
+                "max_tool_calls",
+                "max_model_calls",
+                "max_total_attempts",
+                "max_review_fixes",
+                "worker_timeout_seconds",
+            )
+            if (
+                any(getattr(spec, key) != getattr(previous, key) for key in fixed)
+                or spec.revision.plan_version != previous.revision.plan_version + 1
+                or spec.revision.context_revision != previous.revision.context_revision
+            ):
+                raise ValueError("replanning cannot reset budgets or change execution authority")
+        elif previous is not None:
+            raise ValueError("replanning requires the registered predecessor")
         artifact = self.artifact(
             "plan", json.dumps(self.sanitizer.tree(spec.model_dump(mode="json")))
         )
@@ -266,6 +288,7 @@ class JsonlJournal:
                 task_id=None,
                 revision=spec.revision,
                 kind="plan_registered",
+                source=previous.fingerprint if previous else None,
                 reason=spec.fingerprint,
                 artifacts=(artifact,),
             )

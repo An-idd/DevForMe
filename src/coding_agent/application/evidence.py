@@ -37,15 +37,29 @@ def inspect_evidence(root: Path, session_id: str | None = None) -> EvidenceLedge
     directory = Path(history.journal).parent
     events = history.records.events
     registered = [e for e in events if e.kind == "plan_registered"]
-    if len(registered) != 1 or len(registered[0].artifacts) != 1:
+    if not registered:
         raise ValueError("recorded execution plan unavailable")
-    spec = RunSpec.model_validate_json(read_artifact(directory, registered[0].artifacts[0]))
-    if (
-        sha256(spec.model_dump_json(exclude_unset=True).encode()).hexdigest()
-        != registered[0].reason
-    ):
-        raise ValueError("execution plan fingerprint changed")
-    tasks = {t.id: t for t in (*spec.graph.tasks, *spec.verification_tasks)}
+    specs: dict[int, RunSpec] = {}
+    previous: RunSpec | None = None
+    for event in registered:
+        if len(event.artifacts) != 1:
+            raise ValueError("recorded execution plan unavailable")
+        spec = RunSpec.model_validate_json(read_artifact(directory, event.artifacts[0]))
+        if sha256(spec.model_dump_json(exclude_unset=True).encode()).hexdigest() != event.reason:
+            raise ValueError("execution plan fingerprint changed")
+        if spec.revision != event.revision or spec.session_id != history.session_id:
+            raise ValueError("execution plan identity changed")
+        if previous is not None and (
+            event.source != previous.fingerprint
+            or spec.revision.plan_version != previous.revision.plan_version + 1
+            or spec.revision.context_revision != previous.revision.context_revision
+        ):
+            raise ValueError("execution plan history changed")
+        specs[spec.revision.plan_version] = spec
+        previous = spec
+    original_spec = next(iter(specs.values()))
+    assert previous is not None
+    spec = previous
     requests = {e.event_id: e for e in events if e.tool_request is not None}
     results = {e.tool_result.request_event_id: e for e in events if e.tool_result is not None}
     prepare_ids = {
@@ -64,7 +78,7 @@ def inspect_evidence(root: Path, session_id: str | None = None) -> EvidenceLedge
             state = runtime.load()
             try:
                 runtime.check_knowledge(state)
-                if saved is not None and saved.revision == spec.plan_revision:
+                if saved is not None and saved.revision == original_spec.plan_revision:
                     prepared = next(
                         event.tool_result
                         for event in events
@@ -83,8 +97,8 @@ def inspect_evidence(root: Path, session_id: str | None = None) -> EvidenceLedge
                         == saved.workspace
                     ):
                         current = Revision(
-                            plan_version=saved.version,
-                            context_revision=saved.context_revision,
+                            plan_version=spec.revision.plan_version,
+                            context_revision=spec.revision.context_revision,
                             workspace_revision=snapshot.revision,
                         )
             except (OSError, ValueError, StopIteration):
@@ -97,6 +111,12 @@ def inspect_evidence(root: Path, session_id: str | None = None) -> EvidenceLedge
         if len(event.artifacts) != 1 or event.artifacts[0].truncated:
             raise ValueError("verification record artifact unavailable")
         report = CheckExecution.model_validate_json(read_artifact(directory, event.artifacts[0]))
+        report_spec = specs.get(report.before.plan_version)
+        if report_spec is None or not any(
+            e.revision == report_spec.revision and e.sequence < event.sequence for e in registered
+        ):
+            raise ValueError("verification plan was not registered before execution")
+        tasks = {t.id: t for t in (*report_spec.graph.tasks, *report_spec.verification_tasks)}
         if (
             report.before != event.revision
             or report.task.id != event.task_id

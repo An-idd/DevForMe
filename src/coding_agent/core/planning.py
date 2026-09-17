@@ -165,6 +165,7 @@ class PlanSettings(DomainModel):
     max_total_attempts: PositiveInt = 30
     max_tool_calls: PositiveInt = 30
     max_model_calls: PositiveInt = 31
+    max_replans: Annotated[int, Field(strict=True, ge=0)] = 2
     max_review_fixes: Annotated[int, Field(strict=True, ge=0)] = 2
     worker_timeout_seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)] = 60.0
 
@@ -176,6 +177,8 @@ class PlanSettings(DomainModel):
             data.pop("max_tool_calls", None)
         if self.max_model_calls == 31:
             data.pop("max_model_calls", None)
+        if self.max_replans == 2:
+            data.pop("max_replans", None)
         return data
 
 

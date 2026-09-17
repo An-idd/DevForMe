@@ -126,6 +126,13 @@ class TaskOutcome(DomainModel):
     review_fixes: Annotated[int, Field(strict=True, ge=0)]
 
 
+class FailureDiagnosis(DomainModel):
+    category: Literal["code_failure", "pre_existing", "environment", "unknown", "stale", "review"]
+    reason: NonEmptyStr
+    evidence_ids: tuple[Identifier, ...] = ()
+    repair_allowed: bool = False
+
+
 class WorkflowResult(DomainModel):
     """Task-local outcome. Revision is last observed, not a delivery certification."""
 
@@ -134,6 +141,8 @@ class WorkflowResult(DomainModel):
     tasks: tuple[TaskOutcome, ...]
     evidence: tuple[Evidence, ...]
     reviews: tuple[ReviewResult, ...]
+    diagnoses: tuple[FailureDiagnosis, ...] = ()
+    replan: ReplanRequest | None = None
     revision: Revision
     reason: NonEmptyStr
     pending_milestones: tuple[Identifier, ...] = ()

@@ -2692,16 +2692,18 @@ and --max-model-calls and renders both in the reviewable summary. Application co
 carries them into RunSpec without overrides at execution time. Legacy defaults are omitted
 from PlanSettings serialization to preserve existing plan revisions and approvals; absent
 fields still mean 30/31. Non-default values are persisted and affect the plan revision.
-Existing revision rules reject changes to budgets; this does not implement P11 budget
-reconciliation, automatic replenishment or changes to adapter per-attempt/time limits.
+Pre-execution plan revision rules still reject changes to budgets. The P11 live-session
+increment below carries consumed budgets across operational revisions without replenishment;
+it does not reopen old sessions or change adapter per-attempt/time limits.
 Journal counters derive from durably recorded requests, including failed/interrupted
 calls, and are shared across Coder instances. Context reads consume the tool allowance;
 a final denied request is still recorded. Controller snapshot/diff operations are not
 Agent capabilities and remain available for final inspection after the Agent budget.
 Existing per-task/total attempt and worker time limits also apply. The adapter keeps its
 per-attempt 20-call/60-second defaults. Model counts represent recorded bridge segments,
-not exact HTTP counts, token consumption or a session-wide monetary ceiling. P11 still
-owns persistent budgets across reconciled runs and milestones.
+not exact HTTP counts, token consumption or a session-wide monetary ceiling. P11 carries
+live-session counters across versions; P12 reopening/resume and later milestone activation
+remain pending.
 
 A run uses session ID run-<plan-id>, including across plan versions, and exclusively
 creates .agent/run-<plan-id>/ under the same controller lock used by initialization and
@@ -3342,6 +3344,47 @@ Set maximum retries.
 Record each repair attempt and its trigger. New code changes require fresh applicable verification evidence. Preserve earlier failures and plan versions; review fixes must not erase execution history or silently relax acceptance criteria.
 
 Reassess complexity when actual dependencies, scope, or validation difficulty exceed the plan. Refine staged work through the same versioned replanning path; preserve behavior invariants and session-wide budget consumption across batches.
+
+---
+
+### P11 live execution increment (2026-09-17)
+
+The current increment adds explicit agent run --replan, using the configured review
+API for a separate, read-only Planner call. Planner identity is bound to execution
+approval. PlanSettings.max_replans defaults to 2 (0 disables it); default serialization
+preserves old plan revisions. Every started replan, including rejected or failed calls,
+consumes the cap. Planner model calls and context/diff reads share existing session limits.
+
+WorkflowEngine derives prior Coder and review-repair consumption from the same durable
+events before each graph version. The total attempt cap survives replacement task IDs;
+retained task IDs also retain their per-task attempt count. The review-fix cap is shared
+across the live session; a replan cannot relabel an ongoing review repair as a fresh implementation. Per-call time limits remain in effect; this increment does not
+introduce a token, monetary or total elapsed-time budget.
+
+FailureDiagnosis records code_failure, pre_existing, environment, unknown, stale or review.
+Code failure means a definite failed check, not proof that this change introduced it.
+Matching pre-existing baseline failures and unavailable/uncertain/invalid observations stop
+automatic repairs. Adapter exceptions retain an unknown diagnosis and their existing stop behavior.
+
+Operational revisions may split/replace current tasks within prior concrete scope,
+permissions and risk floors. Requirement-wide acceptance, task criteria/checks, rules,
+invariants, baseline checks and pending milestones remain intact. ReplanRecord stores the
+previous revision and assessment, the proposed immutable PlanVersion, retired task IDs,
+consumption and evidence disposition. Invalid proposals remain inspectable and are not
+authorized. New scope/permissions, changed rules, uncertain side effects and manual source
+changes require reconciliation instead of automatic execution.
+
+The controller registers each accepted RunSpec with its predecessor fingerprint before
+dispatch, deriving matching authorization only after validation against prior authority.
+The same worktree and writer remain open. Plans are execution artifacts; the source plan
+index is unchanged. All current tasks and applicable checks rerun; old evidence is historical,
+and evidence inspection validates each record against its own registered plan version.
+
+P11 remains IN_PROGRESS. Advancing pending milestones based on completed batch evidence,
+continuing after materially new approval, representative refactor/live-model and cross-platform
+acceptance remain pending. Final-snapshot gate failures still block. P12 owns reopening
+journals, checkpoint reconciliation and resume; requirement_complete remains false.
+Windows compatibility work stays paused at the user's request.
 
 ---
 

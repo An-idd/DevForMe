@@ -10,7 +10,8 @@ from ..context.coder import build_context
 from ..core.knowledge import KnowledgeSnapshot
 from ..core.models import DomainModel, Evidence, EvidenceStatus, ScopePolicy, TaskSpec
 from ..core.planning import PlanVersion
-from ..core.provider import ModelProvider
+from ..core.provider import ModelProvider, ProviderError
+from ..core.replanning import SessionUsage
 from ..core.tools import Shell
 from ..core.verification import VerificationSettings
 from ..core.workflow import (
@@ -24,6 +25,7 @@ from ..core.workflow import (
     WorkflowEngine,
     WorkflowResult,
 )
+from ..core.workflow.contracts import FailureDiagnosis
 from ..core.workflow.policy import review_required
 from ..core.workspace import WorkspaceOperation
 from ..executors.codex import CodexCoder, CodexSettings
@@ -37,6 +39,7 @@ from ..tools.runtime import ToolRuntime
 from ..tools.verification import VerificationRunner
 from .initialization import initialize
 from .planning import inspect_plan, run_spec
+from .replanning import replan
 
 
 class ExecutionAuthorization(DomainModel):
@@ -77,6 +80,8 @@ class RunResult(DomainModel):
     baseline: VerificationResult | None = None
     final_verification: VerificationResult | None = None
     final_reviews: tuple[ReviewResult, ...] = ()
+    usage: SessionUsage | None = None
+    plan_revision: str | None = None
 
 
 class _UnavailableStages:
@@ -185,6 +190,7 @@ def execution_spec(
     directory: Path,
     verification: VerificationSettings | None = None,
     reviewer: ModelProvider | None = None,
+    replanner: ModelProvider | None = None,
 ) -> RunSpec:
     verification = verification or VerificationSettings()
     identity = (
@@ -194,6 +200,8 @@ def execution_spec(
         + verification.model_dump_json()
         + reviewer_identity(reviewer)
     )
+    if replanner is not None:
+        identity += "\nreplanner:" + reviewer_identity(replanner)
     global_task = TaskSpec(
         id="requirement-verification",
         title="Requirement verification",
@@ -223,6 +231,7 @@ async def run(
     secrets: tuple[str, ...] = (),
     verification: VerificationSettings | None = None,
     reviewer: ModelProvider | None = None,
+    replanner: ModelProvider | None = None,
 ) -> RunResult:
     root = root.resolve(strict=True)
     try:
@@ -261,7 +270,7 @@ async def run(
         ):
             raise ValueError("verification runtime roots must be separate from project and profile")
     managed = Workspace(root, workspace, plan.settings.scope, excluded=EXCLUDED)
-    spec = execution_spec(plan, config, workspace, verification, reviewer)
+    spec = execution_spec(plan, config, workspace, verification, reviewer, replanner)
     if approve != spec.fingerprint:
         return RunResult(
             status="approval_required",
@@ -270,6 +279,8 @@ async def run(
             spec=spec,
             session_id=spec.session_id,
         )
+    original_plan = plan
+    replanner_identity = reviewer_identity(replanner)
     sanitizer = Sanitizer(secrets)
     with ExecutionRuntime(root, plan, sanitizer=sanitizer) as owner:
         state = owner.load()
@@ -277,7 +288,7 @@ async def run(
 
         def guard() -> None:
             saved, _ = owner.current()
-            if saved != plan:
+            if saved != original_plan:
                 raise ValueError("saved plan changed; reconciliation required")
             owner.check_knowledge(state)
             if managed.prepared:
@@ -288,7 +299,7 @@ async def run(
                     if source.role == "instruction"
                 ):
                     raise ValueError("project rules changed inside worktree; replan required")
-            if capture(root, plan.settings.scope, EXCLUDED)[0] != plan.workspace:
+            if capture(root, original_plan.settings.scope, EXCLUDED)[0] != original_plan.workspace:
                 raise ValueError("source workspace changed; reconciliation required")
 
         guard()
@@ -352,14 +363,6 @@ async def run(
         baseline = final_verification = None
         final_reviews: list[ReviewResult] = []
         global_task = spec.verification_tasks[0]
-        engine = WorkflowEngine(
-            spec,
-            coder=coder,
-            verifier=verifier,
-            reviewer=review_runner or _UnavailableStages(),
-            read_revision=runtime.read_revision,
-            writer=owner.journal,
-        )
         try:
             if plan.draft.baseline_check_ids:
                 baseline = await verifier.check(
@@ -374,6 +377,22 @@ async def run(
                     or {e.check_id for e in baseline.evidence} != expected
                     or any(not e.passed for e in baseline.evidence)
                 ):
+                    category: Literal["environment", "pre_existing", "unknown"] = (
+                        "environment"
+                        if any(e.status is EvidenceStatus.UNAVAILABLE for e in baseline.evidence)
+                        else "pre_existing"
+                        if any(e.status is EvidenceStatus.FAILED for e in baseline.evidence)
+                        else "unknown"
+                    )
+                    owner.record(
+                        "failure_diagnosed",
+                        FailureDiagnosis(
+                            category=category,
+                            reason="Required baseline did not pass before coding",
+                            evidence_ids=tuple(e.id for e in baseline.evidence if not e.passed),
+                        ),
+                        runtime.read_revision(),
+                    )
                     owner.record("execution_blocked", baseline, runtime.read_revision())
                     failures = list(
                         dict.fromkeys(
@@ -396,8 +415,97 @@ async def run(
                     )
             if review_runner is not None and baseline is not None:
                 review_runner.baseline_evidence = baseline.evidence
-            result = await engine.run(approval)
-            status, reason = result.outcome, result.reason
+            initial_purpose: Literal["implement", "debug", "review_fix"] = "implement"
+            initial_feedback: tuple[str, ...] = ()
+            while True:
+                history = inspect_journal(owner.journal.directory / "events.jsonl")
+                engine = WorkflowEngine(
+                    spec,
+                    coder=coder,
+                    verifier=verifier,
+                    reviewer=review_runner or _UnavailableStages(),
+                    read_revision=runtime.read_revision,
+                    writer=owner.journal,
+                    history=history.events,
+                    baseline_evidence=baseline.evidence if baseline else (),
+                    initial_purpose=initial_purpose,
+                    initial_feedback=initial_feedback,
+                )
+                result = await engine.run(approval)
+                status, reason = result.outcome, result.reason
+                if status != "replan_required" or replanner is None:
+                    break
+                try:
+                    if reviewer_identity(replanner) != replanner_identity:
+                        raise ValueError("replanner configuration changed")
+                    stopped = next(t for t in result.tasks if t.state.value == "REPLAN_REQUIRED")
+                    proposed = await replan(
+                        owner,
+                        plan,
+                        knowledge,
+                        verification_runtime(stopped.task_id),
+                        replanner,
+                        result,
+                    )
+                    if reviewer_identity(replanner) != replanner_identity:
+                        raise ValueError("replanner configuration changed during dispatch")
+                except (ValueError, ProviderError, TimeoutError) as error:
+                    reason = (
+                        "Planner timed out; retain work for reconciliation"
+                        if isinstance(error, TimeoutError)
+                        else str(error)
+                    )
+                    owner.record(
+                        "replan_rejected",
+                        FailureDiagnosis(
+                            category="unknown",
+                            reason=reason,
+                        ),
+                        runtime.read_revision(),
+                    )
+                    break
+                if any(d.category == "review" for d in result.diagnoses):
+                    initial_purpose = "review_fix"
+                elif any(d.category == "code_failure" for d in result.diagnoses):
+                    initial_purpose = "debug"
+                initial_feedback = (
+                    (result.reason,)
+                    + tuple(e.result for e in result.evidence if not e.passed)
+                    + tuple(finding for r in result.reviews for finding in (*r.blocking, *r.major))
+                )
+                previous_spec = spec
+                plan = proposed
+                spec = execution_spec(plan, config, workspace, verification, reviewer, replanner)
+                owner.journal.register_plan(spec, previous=previous_spec)
+                approval = PlanApproval(
+                    session_id=spec.session_id,
+                    plan_fingerprint=spec.fingerprint,
+                    source="controller:inherited-operational-replan:" + previous_spec.fingerprint,
+                    timestamp=datetime.now(UTC),
+                )
+                owner.record(
+                    "execution_authorized",
+                    ExecutionAuthorization(
+                        approval=approval,
+                        executor=config,
+                        workspace=str(workspace),
+                        reviewer_identity=reviewer_identity(reviewer),
+                    ),
+                    spec.revision,
+                    source=approval.source,
+                )
+                runtime = verification_runtime(spec.graph.tasks[0].id)
+                coder = _SessionCoder(
+                    owner, plan, knowledge, spec, approval, managed, config, guard
+                )
+                review_runner = (
+                    ReviewRunner(owner, plan, knowledge, reviewer, verification_runtime)
+                    if reviewer is not None
+                    else None
+                )
+                if review_runner is not None and baseline is not None:
+                    review_runner.baseline_evidence = baseline.evidence
+                global_task = spec.verification_tasks[0]
             if result.outcome == "tasks_verified":
                 final_revision = runtime.read_revision()
                 records: list[Evidence] = []
@@ -452,4 +560,8 @@ async def run(
             baseline=baseline,
             final_verification=final_verification,
             final_reviews=tuple(final_reviews),
+            plan_revision=plan.revision,
+            usage=SessionUsage.from_events(
+                inspect_journal(owner.journal.directory / "events.jsonl").events
+            ),
         )

@@ -10,7 +10,7 @@ from ..planning import PlanningOperation, PlanningRevision
 from ..provider import ModelCallRequest, ModelCallResult
 from ..state import TaskState, validate_transition
 from ..tools import ArtifactRef, ToolRequest, ToolResult
-from .contracts import CoderResult, Revision
+from .contracts import CoderResult, FailureDiagnosis, Revision
 
 
 class WorkflowEvent(DomainModel):
@@ -36,6 +36,10 @@ class WorkflowEvent(DomainModel):
         "review_not_required",
         "gate_evaluated",
         "worker_error",
+        "failure_diagnosed",
+        "replan_requested",
+        "replan_proposed",
+        "replan_rejected",
         "session_finished",
         "session_interrupted",
         "plan_registered",
@@ -48,6 +52,7 @@ class WorkflowEvent(DomainModel):
         "model_requested",
         "model_finished",
     ]
+    diagnosis: FailureDiagnosis | None = None
     coder_result: CoderResult | None = None
     reason: NonEmptyStr
     previous_state: TaskState | None = None
@@ -81,6 +86,8 @@ class WorkflowEvent(DomainModel):
                 self.tool_request.invocation, expected_operation
             ):
                 raise ValueError("initialization records only controller operations")
+        if self.diagnosis is not None and self.kind != "failure_diagnosed":
+            raise ValueError("diagnoses belong only to failure_diagnosed")
         if self.coder_result is not None and self.kind != "coder_finished":
             raise ValueError("Coder drafts belong only to coder_finished")
         if self.kind in {"context_built", "implementation_recorded"} and self.task_id is None:
