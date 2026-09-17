@@ -2,7 +2,7 @@
 
 > 版本：V1 / 2026-09-16 / P08 应用集成已通过 Windows 离线验证，真实冒烟待验证
 > 依据：[开发规格](CODING_AGENT_DEVELOPMENT_SPEC.md)，重点参考 §16、§24、§29–31、§35–39、§42、§44–48。
-> 当前状态：P01/P02 已完成；P03 安全修复与 Windows 适配已完成本机验证；macOS 集成复验待完成，状态为 IN_PROGRESS。用户明确授权继续 P04；P04 功能与 Windows 验收已完成，macOS 实机复验待完成，保持 IN_PROGRESS；用户明确授权继续 P05，模型适配已完成离线实现，真实 API 冒烟待验证，P05 保持 IN_PROGRESS；用户另行授权本地 coding adapter，P08 已实现 Codex 接入、任务上下文及 run/diff/history，并通过 Windows 离线验证；真实账号/跨平台复验待完成，保持 IN_PROGRESS；用户授权继续 P06，初始化 CLI 与知识刷新已完成 Windows 离线验证，真实模型与 macOS/POSIX 复验待完成，保持 IN_PROGRESS；用户授权继续 P07，Planner、版本化计划和 CLI 已实现并通过 Windows 离线验证，真实模型与 macOS/POSIX 复验待完成，保持 IN_PROGRESS；P09 已获用户授权并开始开发；P10–P12 尚未开始。
+> 当前状态：P01/P02 已完成；P03 安全修复与 Windows 适配已完成本机验证；macOS 集成复验待完成，状态为 IN_PROGRESS。用户明确授权继续 P04；P04 功能与 Windows 验收已完成，macOS 实机复验待完成，保持 IN_PROGRESS；用户明确授权继续 P05，模型适配已完成离线实现，真实 API 冒烟待验证，P05 保持 IN_PROGRESS；用户另行授权本地 coding adapter，P08 已实现 Codex 接入、任务上下文及 run/diff/history，并通过 Windows 离线验证；真实账号/跨平台复验待完成，保持 IN_PROGRESS；用户授权继续 P06，初始化 CLI 与知识刷新已完成 Windows 离线验证，真实模型与 macOS/POSIX 复验待完成，保持 IN_PROGRESS；用户授权继续 P07，Planner、版本化计划和 CLI 已实现并通过 Windows 离线验证，真实模型与 macOS/POSIX 复验待完成，保持 IN_PROGRESS；P09 已获用户授权并开始开发；P10 已接入独立 Reviewer、规则来源及最终快照重审，真实审查质量待验收；P11–P12 尚未开始。
 
 ## 1. 目标与推进方式
 
@@ -69,7 +69,7 @@ init / 复用项目知识 → 需求与计划 → 按授权执行
 | P07 Planner | P06 | 复杂度评估、PlanDraft 校验/编译、版本化分阶段计划、规则引用、规划 CLI | IN_PROGRESS |
 | P08 Coder | P07 | Codex adapter、版本化上下文、受约束执行与 run/diff/history | IN_PROGRESS |
 | P09 Verification | P08 | 测试/构建/静态检查、结果解析、版本化 Evidence | IN_PROGRESS |
-| P10 Reviewer | P09 | 独立上下文审查、结构化问题、规范与文档检查 | NOT_STARTED |
+| P10 Reviewer | P09 | 独立上下文审查、结构化问题、规范与文档检查 | IN_PROGRESS |
 | P11 修复与重规划 | P10 | 有界修复循环、复杂度重评估、计划变更和证据失效处理 | NOT_STARTED |
 | P12 恢复与 V1 验收 | P11 | Checkpoint/Resume、交付、结果报告、异常场景及对照评测 | NOT_STARTED |
 
@@ -192,10 +192,12 @@ P09 已接入必需检查与基线；未配置验证环境或必需 P10 审查�
 
 ### P10 — 独立 Reviewer
 
-- [ ] Reviewer 使用需求、任务、Diff、相关源码、规则和证据，不接收完整 Coder 对话。
-- [ ] 输出结构化 blocking/major/minor 问题及结论，并绑定计划/代码版本。
-- [ ] 检查规则遵循、需求遗漏和文档维护需求；区分审查判断与真实测试结果。
-- [ ] 审查重构是否保持约定接口、结果、错误语义和相关副作用，不能仅以文件移动完成或新增测试通过判断成功。
+已接入固定 OCR 规则来源、独立模型审查与 run 调度（§8.13–8.14）。以下实现已通过离线验证，真实模型质量与 macOS 原生验收仍待完成，保持 IN_PROGRESS。
+
+- [x] Reviewer 使用需求、任务、Diff、相关源码、规则和证据，不接收完整 Coder 对话。
+- [x] 输出结构化 blocking/major/minor 问题及结论，并绑定计划/代码版本。
+- [x] 检查规则遵循、需求遗漏和文档维护需求；区分审查判断与真实测试结果。
+- [x] 审查重构是否保持约定接口、结果、错误语义和相关副作用，不能仅以文件移动完成或新增测试通过判断成功。
 
 **验收：** 必需审查缺失、无效或有阻塞问题时门禁拒绝；正常 Review 可追溯来源；审查报告不能生成虚假的测试成功记录。
 
@@ -1129,6 +1131,159 @@ Ruff check/format、Windows/Darwin mypy（60 个源码文件）、模板 Schema/
 文档 UTF-8/代码围栏和 git diff --check 均通过。未执行真实模型调用。
 原 TemporaryDirectory 成功断言及严格 xfail 保留，P09 仍为 IN_PROGRESS；本次尚未提交。
 
+### 8.12.2 Open Code Review 适配评估（2026-09-17）
+
+起点 d363943，工作区干净；用户仅授权先评估适配程度，不实施 P10。
+官方源码核对范围、固定提交及 Windows v1.12.4 离线冒烟结果见
+[OPEN_CODE_REVIEW_ASSESSMENT.md](OPEN_CODE_REVIEW_ASSESSMENT.md)。
+Delegation 的 preview/rule JSON 命令实测通过；默认筛选排除 README.md，
+接入时必须独立核对必需审查范围。完整 review 源码已有 manifest，
+但部分完成可退出 0，且逐次持久记录、统一预算及当前沙箱存在适配差异。
+建议优先验证 Delegation 的受控执行边界，再决定实施；本次只新增评估文档。
+未执行真实模型调用、OCR LPAC 运行或 macOS 实测，不声称质量、成本优势；
+P09 既有未完成项保留，P10 保持 NOT_STARTED。
+
+### 8.12.3 Delegation Windows 执行边界探测（2026-09-17）
+
+用户授权继续最小接入验证；保留上节未提交文档。复杂度 medium、风险 high，
+本次仅开发诊断与离线实测，不扩展产品权限、不接入 Reviewer。
+新增 examples/ocr_delegation_probe.py，复用现有 Windows 验证后端，
+对人工 Git 仓库运行官方 v1.12.4 的 version、delegate preview、delegate rule。
+三者均退出 2：剪贴板依赖包初始化加载 user32 失败，尚未进入 Git 或规则逻辑。
+二进制摘要一致，3 组请求/结果完整记录，未超时或截断，原样例仓库指纹未变。
+记录位于本机临时目录 coding-agent-ocr-probe-20260917-final/records/probe.jsonl。
+能力探针退出 1 明确表示不可用，不计为验收通过；未关闭 Win32k、放宽 ACL 或回退宿主执行。
+初次临时探针漏填 risk，执行前校验失败后补全；脚本两行超长经格式化修复。
+脚本 Ruff 检查/格式检查通过，文档校验及 git diff --check 通过；无产品代码变更，
+不重跑全量测试。未执行真实模型、修改版 OCR 构建或 macOS 原生测试。
+评估已改为先验证无交互依赖的离线入口，必要时只复用规则资产；
+Git 执行和后续审查能力未验证。P09 既有未完成项保留，P10 保持 NOT_STARTED。
+
+### 8.12.4 OCR 离线规则入口验证（2026-09-17）
+
+用户继续授权最小适配验证，保留前两次未提交评估与探针。
+在临时目录使用校验过的 Go 1.25.5 工具链，从固定上游提交原样复用
+rules.LoadDefault / delegate.GroupRules，构建无 CLI/TUI 初始化的独立入口。
+新增 examples/ocr_offline_rules 的入口、单元测试及构建说明；未增加项目运行依赖。
+复杂度 medium、风险 high；原型只提供内置规则，不接入模型或产品状态流程。
+
+真实 Windows 单进程只读 LPAC 探测通过：冻结路径列表全部得到规则，
+Python 规则与官方 CLI 输出逐字一致；路径穿越、控制路径、未知 schema、
+超大输入均退出 1，未超时/截断，样例仓库指纹未变。
+使用 verification=False，未开放 scratch、Git runtime、网络或子进程。
+调用前请求及实际结果保留在临时目录
+coding-agent-ocr-headless-qmj8tvnw/native-final/records/probe.jsonl。
+新入口 Go 单元测试 2 passed（含 7 类非法输入及分组覆盖）；构建成功。
+首轮对照脚本误用默认编码读取工件，改用 UTF-8 后重跑通过，失败记录保留。
+
+尚未验证完整 Delegation 筛选、自定义规则/内容识别、macOS 与真实审查质量。
+官方完整 exe 的启动失败不视为已修复；本次只证明裁剪入口可运行。
+后续产品化可选择固定规则资产或该入口；仍需 Reviewer 上下文、规则优先级、
+调用留痕、身份与完成门禁适配。P09 已知失败保留，P10 仍为 NOT_STARTED。
+
+### 8.13 P10 规则来源与上下文接口（2026-09-17）
+
+用户授权继续接入规则来源；保留此前未提交评估/原型。复杂度 medium、风险 high：
+只新增只读规则操作和补充上下文接口，不修改沙箱或放宽完成门禁。
+选择固定规则资产，避免生产引入 Go/完整 OCR CLI；保留 Apache-2.0 许可、来源及转换声明。
+上游固定提交 4e59c7e815bde045158b549cdc2a7f58a32f6ba0；52 份原样规则文档，
+顺序路径映射保留，花括号选项预展开后复用既有 glob_matches。
+172 个路径与上游 Go 原型逐字输出的 SHA-256 对照一致，测试夹具保留来源和期望摘要。
+
+ReviewRulesOperation 经 ToolRuntime 权限、共享预算和先记录后读取流程；
+每次校验固定规则包及请求摘要，无缓存绕过资产变更。输出记录上游提交、文档路径/
+摘要及补充属性，不能作为 Evidence。attach_review_guidance 保留项目显式规范，
+绑定原任务上下文及请求事件，拒绝过期、截断、覆盖缺失和规则版本不符。
+公共 API、package-data、规格与 README 同步；Coder 工具列表不变。
+该上下文接口尚未接入 agent run 的 Reviewer 调度，不提前声称完整独立审查可用。
+
+定向测试 19 passed（14.10 秒），覆盖来源对照、权限、预算、日志故障、
+资产丢失/损坏/版本变化、上下文与项目规则保留，以及读取期间代码变化。
+P10 开始规则来源这一子步骤，状态 IN_PROGRESS；其四项完整验收清单仍未完成。
+P09 的 Windows 私有临时目录失败、macOS/真实账号待验证项继续保留。
+
+最终验证：全量 882 passed、24 skipped、1 xfailed（287.82 秒），日志位于
+本机临时目录 coding-agent-review-rules-full.log；既有平台跳过和私有目录失败保留。
+Ruff check/format、Windows/Darwin mypy（63 个源码文件）通过。
+规则/LICENSE/NOTICE 的 wheel 打包与独立 zip 导入读取通过，工件位于本机临时目录
+coding-agent-rule-wheel-12wbyadx/wheel/verified_coding_agent-0.1.0-py3-none-any.whl。
+构建检查初因虚拟环境缺少 setuptools 失败，改在临时目录下载并校验 setuptools 80.9.0，
+未修改项目环境或全局安装。初次 Diff 检查发现 README 末尾多余空行，已移除。
+文档 UTF-8、代码围栏、来源对照与 git diff --check 通过；未调用真实模型。
+本次未提交或推送。
+
+### 8.14 P10 独立审查与 run 调度（2026-09-17）
+
+用户授权继续；复用 ModelRuntime、ToolRuntime、Workflow Engine 和 QualityGate，
+新增最小 ReviewDraft/ReviewRunner，无新依赖。复杂度 medium、风险 high：
+本次改变必需审查可用性与最终门禁，仍由运行时生成身份及记录，模型不能写权威状态。
+
+独立上下文包含需求、任务、累计 Diff、当前源码、全体显式项目规则、补充 OCR 指导、
+实际验证证据以及重构不变量/历史基线，不传 Coder 对话或工具能力。
+新增和删除路径纳入覆盖；64 路径/512 KiB 与既有读取限制同时生效，截断即阻塞。
+Schema 要求 blocking/major/minor、结论、路径/规则/维度覆盖及文档判断；
+模型声称通过但有 blocking/major 仍失败，伪造 Evidence 字段或不完整覆盖不能通过。
+覆盖声明不能证明真实模型理解正确，质量验收需单独实测。
+
+agent run 新增 --review-env-file/--review-model，编码 --model 语义不变；
+API 接受 reviewer=ModelProvider。供应商、生成配置、端点摘要和规则包参与执行指纹。
+任务验证通过后审查，最后对全部业务任务和全局验收按最终快照重验/重审；
+final_reviews 保存最终结果，失败 run=blocked，历史任务状态不等于需求完成。
+review_context_built、模型请求/结果、review_recorded 保留上下文、摘要、阶段与身份。
+调用共享已有预算，记录失败与取消不转换成成功；未配置 Reviewer 仍 unavailable。
+
+专项测试覆盖独立上下文、完整覆盖、伪造字段、major 阻塞、过期、截断、
+新增/删除、预算耗尽、Provider 配置变化、日志故障、取消、最终重审、
+CLI 配置分离、重构历史基线。首次重构测试错误地修改已有计划的不变量，
+触发既有 P07 保护；改为在未执行的临时项目创建独立计划，未削弱保护。
+初次回归命令误用了不存在的测试文件，纠正后完成回归。
+专项前 22 项通过，新增重构/取消 2 项通过；相关回归 116 passed、1 xfailed。
+完整验证：906 passed、24 skipped、1 xfailed（397.40 秒），日志位于本机临时目录
+coding-agent-p10-full.log。Ruff check/format、Windows/Darwin mypy（65 个源码文件）、
+CLI 帮助、文档 UTF-8/围栏及 git diff --check 通过。
+
+未调用真实模型、未执行 macOS 原生验证；保留 Windows 私有临时目录严格 xfail。
+P10 保持 IN_PROGRESS，不推进 P11/P12，不提交或推送。
+
+
+### 8.15 P10 真实模型与 Windows 验证联调（2026-09-17）
+
+用户明确告知已配置真实模型并授权继续，读取 .env 的智谱 glm-5.3 配置。
+新增显式启用的 tests/test_reviewer_live.py，复用临时项目、固定 Coder 补丁、
+实际 Windows LPAC unittest、ReviewRunner、最终快照门禁及日志；无新依赖。
+每轮上限 4 次 API 调用、每次 8192 输出 token/60 秒，不自动重试；
+max_review_fixes=0 用于固定本冒烟的调用预算，不改生产默认预算。
+
+保留诊断过程：初次两个请求均收到 HTTP 429，无模型结果，正确记录 unavailable。
+HTTP 429 的具体供应商原因未取得，不能据此认定余额不足。
+初版测试错误地读取工作区容器而非返回的 worktree 路径，已修正。
+后续诊断调用恢复成功：任务/最终任务审查 passed，全局重审漏报覆盖，
+运行时以 inconclusive 阻止完成。明确提示完整路径、规则、四维度输出后，
+两个场景 2 passed（51.46 秒）：正常改动三次审查 passed（14749 总 token），
+回归审查识别 service.py 返回值从 1 改为 2 的 blocking（5177 总 token），
+即使实际测试通过仍返回 replan_required（修复预算耗尽）。
+
+人工核对另发现模型将既有弱测试误称为本次削弱。提示词补充“历史变化必须有
+Diff/历史源码依据”，追加回归 1 passed、1 deselected（19.14 秒，5364 总 token）；
+该次结果明确区分既有测试缺口与本次返回值回归。未降低覆盖检查或修改预期来放行。
+有限样例不证明模型持续准确，也未对完整 OCR 引擎做审查质量对比。
+
+最终成功场景和历史归因复验的报告、journal、上下文/模型工件副本保存在本机临时目录
+coding-agent-p10-live-evidence-2rtzoo_m，manifest.json 列出三个报告。
+原始报告内 journal 路径指向 pytest 临时目录；长期核对使用副本目录 records/events.jsonl。
+初次失败与诊断日志分别是 coding-agent-p10-live.log、
+coding-agent-p10-live-diagnostic.log；成功/归因复验日志为
+coding-agent-p10-live-final.log、coding-agent-p10-live-history.log。
+pytest 会轮换旧临时目录，早期失败完整工件未保留，不将日志当作成功证据。
+
+离线 Reviewer 回归 24 passed（97.97 秒），默认真实入口 2 skipped；
+Ruff check/format、Windows/Darwin mypy（65 个源码文件）通过。
+本轮仅增冒烟和调整提示词，未重复之前 906 passed 的全量回归。
+P10 保持 IN_PROGRESS：代表性项目质量、macOS、真实 Codex 全链路仍待验收。
+原有 Windows Python 私有目录严格 xfail 保留；未提交或推送。
+提交检查发现 core.autocrlf=true 会改变规则包字节；新增 .gitattributes 固定 rules.json 为 LF，
+验证暂存内容及 Windows Git 检出后的 SHA-256 与固定摘要一致。
+
 ## 9. 下一步执行单元
 
 1. P06 真实探索需在代表性项目上显式运行 agent init PATH --refresh --model MODEL 并核查来源质量。
@@ -1143,5 +1298,5 @@ Ruff check/format、Windows/Darwin mypy（60 个源码文件）、模板 Schema/
    真实修改与缺少证据仍阻塞；同时在 macOS/POSIX 复验 P08。
 5. P09 验证、基线、最终重跑及 Evidence 查询已接入；继续解决 Windows Python 私有临时目录
    的 LPAC 兼容能力，补 macOS 实测及其他必需验证能力。不得以扩大宿主权限或改写运行时语义绕过。
-   保留上述未验证项与严格 xfail，不提前声称阶段 DONE；P10 尚未开始。
+   保留上述未验证项与严格 xfail，不提前声称阶段 DONE；P10 已接入独立审查，仍需真实模型质量与 macOS 原生验收。
    Claude Code、Pi 需要先证明相同工具边界和留痕能力，不能直接开启不受控的原生工具。

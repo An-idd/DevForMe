@@ -97,6 +97,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=[],
         help="Trusted standalone runtime directory outside the project (repeatable)",
     )
+    execution.add_argument(
+        "--review-model", help="Opt in to independent API review; separate from Coder model"
+    )
+    execution.add_argument(
+        "--review-env-file", type=Path, help="Reviewer CODING_AGENT_* configuration"
+    )
     execution.add_argument("--approve", help="Exact fingerprint printed by run preview")
     execution.add_argument("--json", action="store_true")
     for name in ("diff", "history", "evidence"):
@@ -116,9 +122,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         filter(None, (os.environ.get("OPENAI_API_KEY"), os.environ.get("CODING_AGENT_API_KEY")))
     )
 
-    def model_provider(token_limit: int) -> OpenAIProvider | ZhipuProvider:
+    def model_provider(
+        token_limit: int, *, model: str | None = None
+    ) -> OpenAIProvider | ZhipuProvider:
         settings = GenerationSettings(
-            model=config.model if config else args.model,
+            model=config.model if config else model or args.model,
             max_output_tokens=token_limit,
             timeout_seconds=60,
         )
@@ -155,8 +163,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "run requires native Codex, --codex-home and --model "
                     "(or CODING_AGENT_CODEX_HOME/MODEL)"
                 )
-            return await execute_plan(
-                args.path,
+            options = dict(
+                root=args.path,
                 workspace=args.workspace,
                 verification=VerificationSettings(
                     runtime_roots=tuple(p.resolve(strict=True) for p in args.verification_runtime),
@@ -169,6 +177,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ),
                 secrets=secrets,
             )
+            if args.review_model or config:
+                async with model_provider(8192, model=args.review_model) as provider:
+                    return await execute_plan(reviewer=provider, **options)
+            return await execute_plan(**options)
         if args.command in {"status", "graph"}:
             return inspect_plan(args.path)
         if args.command == "plan":
@@ -213,6 +225,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     try:
+        if args.command == "run" and args.review_env_file is not None:
+            config = load_assistant_config(args.review_env_file, model=args.review_model)
+            secrets = (*secrets, config.api_key.get_secret_value())
         if getattr(args, "env_file", None) is not None:
             config = load_assistant_config(args.env_file, model=args.model)
             secrets = (*secrets, config.api_key.get_secret_value())

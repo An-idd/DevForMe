@@ -35,12 +35,15 @@ class TaskContextPack(DomainModel):
 
 
 async def build_context(
-    runtime: ToolRuntime, plan: PlanVersion, knowledge: KnowledgeSnapshot
+    runtime: ToolRuntime, plan: PlanVersion, knowledge: KnowledgeSnapshot, *, review: bool = False
 ) -> TaskContextPack:
     if runtime.workspace is None or knowledge.revision != plan.context_revision:
         raise ValueError("context requires a managed workspace and matching knowledge")
     task = runtime.task
-    item = next(t for t in plan.draft.tasks if t.task.id == task.id)
+    item = next((t for t in plan.draft.tasks if t.task.id == task.id), None)
+    if item is None and task not in runtime.spec.verification_tasks:
+        raise ValueError("context task does not belong to the plan")
+    items = (item,) if item is not None else plan.draft.tasks
     revision = runtime.read_revision()
     if (
         runtime.spec.plan_revision != plan.revision
@@ -48,15 +51,19 @@ async def build_context(
         or revision.context_revision != knowledge.revision
     ):
         raise ValueError("context plan or knowledge revision changed")
-    required = set(applicable_rules(knowledge, task.scope.allowed))
-    selected = required | set(item.rule_ids) | set(item.context_ids)
+    required = (
+        {e.id for e in knowledge.summary.entries if e.authority == "rule"}
+        if review
+        else set(applicable_rules(knowledge, task.scope.allowed))
+    )
+    selected = required | {r for t in items for r in (*t.rule_ids, *t.context_ids)}
     entries = tuple(
         ContextEntry(id=e.id, entry=e)
         for e in knowledge.summary.entries
         if e.id in selected or (e.authority == "assumption" and not e.sources)
     )
     references = (
-        *item.sources,
+        *(r for t in items for r in t.sources),
         *plan.draft.assessment.sources,
         *(r for e in entries for r in e.entry.sources),
     )
@@ -69,6 +76,8 @@ async def build_context(
         if source.path == USER_SOURCE:
             continue
         if source.path not in actual:
+            if review and source.role != "instruction":
+                continue
             raise ValueError("context source disappeared; replan required")
         result = await runtime.execute(
             ToolRequest(
@@ -95,7 +104,7 @@ async def build_context(
         plan_revision=plan.revision,
         revision=revision,
         requirement=plan.draft.requirement,
-        assessment=item.assessment or plan.draft.assessment,
+        assessment=(item.assessment if item else None) or plan.draft.assessment,
         acceptance=plan.draft.acceptance,
         milestones=plan.draft.milestones,
         entries=entries,

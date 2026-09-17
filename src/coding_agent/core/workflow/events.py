@@ -31,6 +31,8 @@ class WorkflowEvent(DomainModel):
         "verification_recorded",
         "review_started",
         "review_finished",
+        "review_context_built",
+        "review_recorded",
         "review_not_required",
         "gate_evaluated",
         "worker_error",

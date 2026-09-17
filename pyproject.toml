@@ -45,3 +45,6 @@ plugins = ["pydantic.mypy"]
 init_forbid_extra = true
 init_typed = true
 warn_required_dynamic_aliases = true
+
+[tool.setuptools.package-data]
+coding_agent = ["data/open_code_review/*"]

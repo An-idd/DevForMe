@@ -201,7 +201,8 @@ class JsonlJournal:
         self._model_calls += event.model_request is not None
         self._agent_tool_calls += (
             event.tool_request is not None
-            and event.tool_request.invocation.kind in {"read", "search", "patch", "shell", "git"}
+            and event.tool_request.invocation.kind
+            in {"read", "search", "patch", "shell", "git", "review_rules"}
         )
         if event.tool_request is not None or event.model_request is not None:
             self._pending[event.event_id] = event

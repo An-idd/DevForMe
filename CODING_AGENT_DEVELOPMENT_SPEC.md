@@ -2728,7 +2728,7 @@ paths, dispatched commands and tool request IDs. Exit codes/statuses stay in the
 ToolResults. These observations and model claims are separate; no summary produces Evidence.
 
 The original P08 missing-verifier placeholder is replaced by P09 (Section 22.1).
-Unconfigured verification records unavailable evidence; required P10 review remains unavailable.
+Unconfigured verification records unavailable evidence; required P10 review is unavailable unless a Reviewer provider is configured.
 A declared refactor or explicit baseline_check_ids now executes baseline checks before Coder,
 and blocks modification unless all required baseline coverage passes. Implemented drafts, failed attempts and partial changes remain in the
 independent Worktree; there is no source overwrite, cleanup, commit or delivery operation.
@@ -3267,6 +3267,52 @@ Relevant Context
 Reviewer must return structured output.
 
 Include relevant project rules and documentation references. Review conformance, requirement coverage, and whether changed interfaces/module relationships require documentation updates. Persist review results with their plan and workspace references.
+
+---
+
+
+P10 rule-source increment: the controller can request a pinned supplemental Open Code
+Review rule bundle through ToolRuntime with repository-relative paths and an expected
+bundle SHA-256. Requests and results use the shared journal and tool-call budget;
+path denial, missing/corrupt assets, and revision mismatch fail closed. Results identify
+the upstream commit, bundle hash, document hash and selected paths. These are guidance,
+not ReviewResult or acceptance evidence. All supplied paths receive guidance, including
+documents; OCR's file exclusion policy is not imported.
+
+attach_review_guidance binds the returned guidance and request event to a fresh
+TaskContextPack. Explicit project/user rules remain separate and take precedence.
+Stale context, incomplete coverage and truncated results are rejected. ReviewRunner
+persists this context before a fresh tool-free ModelRuntime call. Inputs include the
+requirement, task, cumulative diff, current sources (including new/deleted path coverage),
+explicit project rules, supplemental rules and current verification evidence. Refactor
+inputs also carry invariant IDs and historical baseline evidence, which cannot replace
+current verification. Input is limited to 64 paths and 512 KiB and existing source/tool
+output bounds; required truncated content blocks dispatch.
+
+ReviewDraft contains only conclusions, findings, coverage declarations and documentation
+assessment. The runtime supplies task/revision/source/timestamp for ReviewResult.
+Missing coverage, inconclusive output, invalid schema, provider failure or changed inputs
+cannot pass. Blocking/major findings override a model's passed conclusion. Coverage
+declarations are validated but are not proof of semantic review quality. Journal failure
+and cancellation propagate. Requests and results share existing tool/model budgets.
+
+agent run accepts --review-env-file (CODING_AGENT_* settings) and --review-model;
+--model remains the Coder model. API callers supply run(reviewer=ModelProvider).
+Reviewer provider/generation/endpoint identity and pinned rules affect the execution
+fingerprint. Without configuration, required review remains unavailable. No OCR executable,
+Go runtime, custom/global OCR configuration, OCR model loop or content sniffing is included.
+
+Task review follows successful verification through Workflow Engine. After all tasks
+pass, the controller re-verifies and re-reviews business tasks and global acceptance at
+the final snapshot. Any failure or subsequent snapshot change blocks the run. Recorded
+review_context_built and review_recorded artifacts bind context digests and results;
+final_reviews exposes final review results, separately from historical task state.
+Models cannot create test evidence or transition task state. Review claims about historical
+changes must be supported by the diff or supplied historical source; existing test gaps must
+be distinguished from newly introduced regressions. Bounded Windows/glm-5.3 smoke covers a
+comment-only change and a return-value regression using real sandboxed unittest and a
+synthetic Coder. Representative quality, native macOS and live Coder end-to-end acceptance
+remain pending; P10 stays IN_PROGRESS and requirement_complete stays false.
 
 ---
 

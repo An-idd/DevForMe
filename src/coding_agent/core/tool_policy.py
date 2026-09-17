@@ -7,6 +7,7 @@ from .paths import glob_matches as glob_matches
 from .paths import path_permitted as path_permitted
 from .paths import relative_parts as relative_parts
 from .planning import PlanningOperation
+from .review import ReviewRulesOperation
 from .tools import Decision, Git, Patch, PolicyDecision, Shell, ToolRequest
 from .workspace import WorkspaceOperation
 
@@ -37,6 +38,12 @@ class PolicyEngine:
                 reason="controller workspace operation"
                 if workspace_controller
                 else "workspace lifecycle is controller-only",
+            )
+        if isinstance(invocation, ReviewRulesOperation):
+            allowed = all(path_permitted(path, task.scope) for path in invocation.paths)
+            return PolicyDecision(
+                decision=Decision.ALLOW if allowed else Decision.DENY,
+                reason="supplemental rule lookup" if allowed else "review path denied",
             )
         if isinstance(invocation, (Shell, Git)):
             if isinstance(invocation, Shell):

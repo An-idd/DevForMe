@@ -10,6 +10,7 @@ from ..context.coder import build_context
 from ..core.knowledge import KnowledgeSnapshot
 from ..core.models import DomainModel, Evidence, EvidenceStatus, ScopePolicy, TaskSpec
 from ..core.planning import PlanVersion
+from ..core.provider import ModelProvider
 from ..core.tools import Shell
 from ..core.verification import VerificationSettings
 from ..core.workflow import (
@@ -23,6 +24,7 @@ from ..core.workflow import (
     WorkflowEngine,
     WorkflowResult,
 )
+from ..core.workflow.policy import review_required
 from ..core.workspace import WorkspaceOperation
 from ..executors.codex import CodexCoder, CodexSettings
 from ..runtime._snapshots import capture
@@ -30,6 +32,7 @@ from ..runtime.workspace import Workspace
 from ..session.records import Sanitizer, inspect_journal
 from ..tools.execution import ExecutionRuntime
 from ..tools.initialization import EXCLUDED
+from ..tools.review import ReviewRunner, reviewer_identity
 from ..tools.runtime import ToolRuntime
 from ..tools.verification import VerificationRunner
 from .initialization import initialize
@@ -40,6 +43,7 @@ class ExecutionAuthorization(DomainModel):
     approval: PlanApproval
     executor: CodexSettings
     workspace: str
+    reviewer_identity: str
 
 
 class ImplementationResult(DomainModel):
@@ -72,6 +76,7 @@ class RunResult(DomainModel):
     requirement_complete: Literal[False] = False
     baseline: VerificationResult | None = None
     final_verification: VerificationResult | None = None
+    final_reviews: tuple[ReviewResult, ...] = ()
 
 
 class _UnavailableStages:
@@ -179,9 +184,16 @@ def execution_spec(
     config: CodexSettings,
     directory: Path,
     verification: VerificationSettings | None = None,
+    reviewer: ModelProvider | None = None,
 ) -> RunSpec:
     verification = verification or VerificationSettings()
-    identity = config.model_dump_json() + "\n" + str(directory) + verification.model_dump_json()
+    identity = (
+        config.model_dump_json()
+        + "\n"
+        + str(directory)
+        + verification.model_dump_json()
+        + reviewer_identity(reviewer)
+    )
     global_task = TaskSpec(
         id="requirement-verification",
         title="Requirement verification",
@@ -210,6 +222,7 @@ async def run(
     approve: str | None = None,
     secrets: tuple[str, ...] = (),
     verification: VerificationSettings | None = None,
+    reviewer: ModelProvider | None = None,
 ) -> RunResult:
     root = root.resolve(strict=True)
     try:
@@ -248,7 +261,7 @@ async def run(
         ):
             raise ValueError("verification runtime roots must be separate from project and profile")
     managed = Workspace(root, workspace, plan.settings.scope, excluded=EXCLUDED)
-    spec = execution_spec(plan, config, workspace, verification)
+    spec = execution_spec(plan, config, workspace, verification, reviewer)
     if approve != spec.fingerprint:
         return RunResult(
             status="approval_required",
@@ -288,7 +301,12 @@ async def run(
         owner.journal.register_plan(spec)
         owner.record(
             "execution_authorized",
-            ExecutionAuthorization(approval=approval, executor=config, workspace=str(workspace)),
+            ExecutionAuthorization(
+                approval=approval,
+                executor=config,
+                workspace=str(workspace),
+                reviewer_identity=reviewer_identity(reviewer),
+            ),
             spec.revision,
             source=approval.source,
         )
@@ -313,7 +331,6 @@ async def run(
                 journal=str(owner.journal.directory / "events.jsonl"),
             )
         coder = _SessionCoder(owner, plan, knowledge, spec, approval, managed, config, guard)
-        unavailable = _UnavailableStages()
 
         def verification_runtime(task_id: str) -> ToolRuntime:
             return ToolRuntime(
@@ -326,14 +343,20 @@ async def run(
                 guard=guard,
             )
 
+        review_runner = (
+            ReviewRunner(owner, plan, knowledge, reviewer, verification_runtime)
+            if reviewer is not None
+            else None
+        )
         verifier = VerificationRunner(owner, verification, verification_runtime)
         baseline = final_verification = None
+        final_reviews: list[ReviewResult] = []
         global_task = spec.verification_tasks[0]
         engine = WorkflowEngine(
             spec,
             coder=coder,
             verifier=verifier,
-            reviewer=unavailable,
+            reviewer=review_runner or _UnavailableStages(),
             read_revision=runtime.read_revision,
             writer=owner.journal,
         )
@@ -371,6 +394,8 @@ async def run(
                         worktree=str(managed.path),
                         baseline=baseline,
                     )
+            if review_runner is not None and baseline is not None:
+                review_runner.baseline_evidence = baseline.evidence
             result = await engine.run(approval)
             status, reason = result.outcome, result.reason
             if result.outcome == "tasks_verified":
@@ -387,6 +412,23 @@ async def run(
                             "blocked",
                             "Required final-snapshot verification did not pass",
                         )
+                        continue
+                    review = None
+                    if review_required(task, spec.mode):
+                        review = (
+                            await review_runner.check(
+                                task, final_revision, checked.evidence, phase="final"
+                            )
+                            if review_runner is not None
+                            else await _UnavailableStages().review(
+                                task, final_revision, checked.evidence
+                            )
+                        )
+                        final_reviews.append(review)
+                    if not gate.evaluate(
+                        task, runtime.read_revision(), checked.evidence, review, spec.mode
+                    ).passed:
+                        status, reason = "blocked", "Required final-snapshot review did not pass"
                 final_verification = VerificationResult(evidence=tuple(records))
         finally:
             # Stop new side effects if a request/result pair or journal is unavailable.
@@ -397,6 +439,8 @@ async def run(
                 )
                 if recorded.status != "succeeded":
                     raise ValueError("final inspection failed; retain workspace and journal")
+        if result.outcome == "tasks_verified" and runtime.read_revision() != final_revision:
+            status, reason = "blocked", "Final snapshot changed after verification/review"
         return RunResult(
             status=status,
             reason=reason,
@@ -407,4 +451,5 @@ async def run(
             workflow=result,
             baseline=baseline,
             final_verification=final_verification,
+            final_reviews=tuple(final_reviews),
         )

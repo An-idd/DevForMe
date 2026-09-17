@@ -1,7 +1,8 @@
-"""Zhipu Chat Completions for bounded, read-only Explorer and Planner calls."""
+"""Zhipu Chat Completions for bounded, read-only Explorer, Planner and Reviewer calls."""
 
 import asyncio
 import json
+from hashlib import sha256
 from typing import Any, Self, cast
 from urllib.parse import urlsplit
 
@@ -45,6 +46,7 @@ class ZhipuProvider:
         http_client: DefaultAsyncHttpxClient | None = None,
     ) -> None:
         self.settings = GenerationSettings.model_validate(settings)
+        self.endpoint_sha256 = sha256(api_url.encode()).hexdigest()
         try:
             url = urlsplit(api_url)
             if (

@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 import os
+from hashlib import sha256
 from typing import Any, Self, cast
 
 from openai import (
@@ -156,6 +157,7 @@ class OpenAIProvider:
         http_client: DefaultAsyncHttpxClient | None = None,
     ) -> None:
         self.settings = GenerationSettings.model_validate(settings)
+        self.endpoint_sha256 = sha256(b"https://api.openai.com/v1/responses").hexdigest()
         if self.settings.max_output_tokens is None:
             raise ProviderError(ModelFailure(code="configuration"))
         key = (

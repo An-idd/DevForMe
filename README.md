@@ -7,7 +7,7 @@ P05 模型适配、P06 项目初始化及 P07 计划 CLI。包含 QualityGate、
 源码快照、Worktree、OpenAI Responses 适配和有来源的项目知识。
 P05–P07 模型行为通过离线模拟测试，另有实验性 CodexCoder 接入本地 Codex 编码循环；
 P08 已接入任务上下文、run CLI、独立工作区和 diff/history。
-P09 已接入版本化验证 Evidence；真实账号/API 冒烟、P10 审查及最终交付仍待完成；跨平台复验及阶段状态见开发计划。
+P09 已接入版本化验证 Evidence；P10 已接入独立 Reviewer、OCR 补充规则和最终快照重审。真实账号/API 冒烟、审查质量与最终交付仍待完成；跨平台复验及阶段状态见开发计划。
 
 ## 开发环境
 
@@ -226,7 +226,7 @@ Python 目录需包含可独立运行的 python.exe、DLL、Lib/DLLs 与所需 s
   --json 包含完整检查与输出引用；没有记录不等于通过。修改代码、规则或计划后不会复用旧通过。
   当前实现不认证仓库外部任意人伪造的整套控制历史，也不以 Git HEAD 代替实际源码快照。
 
-P10 审查、P11 跨批次协调及 P12 交付仍待完成；requirement_complete 始终为 false。
+P10 审查质量验收、P11 跨批次协调及 P12 交付仍待完成；requirement_complete 始终为 false。
 Windows 验证使用临时测试项目和离线 Coder；真实账号与 macOS/POSIX 的待验收项见 DEV_PLAN。
 
 ### Windows 私有临时目录前置检查
@@ -287,7 +287,7 @@ CODING_AGENT_CODEX_HOME、CODING_AGENT_CODEX_MODEL 提供。全部命令支持 -
 - 原项目代码保持原样；修改保存在指定目录下的 Worktree，返回实际路径。
   运行时记录修改前后快照、实际改动路径、工具/命令及结果，模型总结独立标为 draft。
   新调用方、共享状态、依赖、范围或验证困难需要结构化 replan 请求，停止当前调度。
-- P09 已接入，未配置验证运行时会记录 unavailable 并阻塞；P10 尚未接入，必需审查仍阻塞。
+- P09 已接入，未配置验证运行时会记录 unavailable 并阻塞；P10 已接入，未配置 Reviewer 时必需审查仍阻塞。
   重构或显式基线计划在基线未通过时于 Coder 修改前阻塞。模型所说的“测试通过”不能将状态变为 VERIFIED。
 - 会话记录位于 .agent/run-<plan-id>/，与 init/plan 共用独占锁。同一计划各版本共用一次执行身份；
   已有目录拒绝重跑，不重置预算。不自动恢复、删除修改、回写源项目或提交 Git；
@@ -627,3 +627,87 @@ Remove-Item Env:CODING_AGENT_CODEX_LIVE
 协议依据：[Codex App Server](https://learn.chatgpt.com/docs/app-server)、
 [配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)；
 另核对了本机 CLI 导出的 schema。实施范围和验收记录见 [开发计划](DEV_PLAN.md)。
+
+## P10：独立 Reviewer 与补充规则（离线实现）
+
+已接入固定版本 Open Code Review 的内置规则资产，无需安装 OCR 或 Go。
+Tool Runtime 支持 `ReviewRulesOperation(paths=..., bundle_sha256=...)`：
+先记录请求，再校验权限、规则包身份并读取；调用计入共享工具预算。
+输出包含上游提交、规则包/文档 SHA-256、命中规则和补充指导，日志绑定任务及代码版本。
+资产缺失、损坏或摘要不匹配返回失败。
+
+控制器可对新构建的 TaskContextPack 调用
+`coding_agent.context.reviewer.attach_review_guidance(runtime, context, paths)`。
+它保留项目显式规则，单独附加 authority=supplemental 的外部指导；
+拒绝过期上下文、截断结果及不完整路径覆盖。返回的上下文摘要包含规则来源及请求事件引用。
+该底层接口不产生 ReviewResult；agent run 的 ReviewRunner 负责持久保存上下文、调用模型和复核版本。
+
+该 API 由控制器调用，未暴露给 Coder 工具列表。缺少必需审查时仍阻塞。
+未复用完整 OCR 引擎、自定义规则配置或内容语言识别；
+.m 文件按路径获得 MATLAB 规则，其歧义由 Reviewer 独立判断。
+规则文本本身不代表检查执行、审查通过或需求完成。
+
+上游来源、许可证与转换说明位于
+[src/coding_agent/data/open_code_review/NOTICE](src/coding_agent/data/open_code_review/NOTICE)，
+适配验证见 [OPEN_CODE_REVIEW_ASSESSMENT.md](OPEN_CODE_REVIEW_ASSESSMENT.md)。
+
+### 启用审查
+
+在已有 run 参数上增加 --review-env-file .env，读取前述 CODING_AGENT_PROVIDER、
+CODING_AGENT_API_URL、CODING_AGENT_MODEL、CODING_AGENT_API_KEY 配置。
+--review-model 可单独覆盖审查模型；--model 仍只选择本地 Codex 的编码模型。
+仅传 --review-model 时使用 OpenAI Provider 及 OPENAI_API_KEY。
+例如，在已配置验证运行时的运行命令上追加：
+
+~~~powershell
+agent run --path . --workspace 'D:\AgentWork\review-run' --codex-home 'D:\AgentProfiles\coding-agent' --model CODER_MODEL --review-env-file .env --verification-runtime 'D:\AgentRuntimes\Python'
+~~~
+
+先核对预览，再以相同参数追加 --approve FINGERPRINT。预览不调用模型。
+Reviewer 的供应商、模型/生成配置、端点摘要及规则包身份参与执行指纹；
+配置变化需要重新核对预览。应用 API 对应 application.execution.run(reviewer=ModelProvider)。
+不配置 Reviewer 时保持 unavailable；低风险 FAST 且未声明审查时沿用既有省略规则。
+
+### 上下文、门禁与记录
+
+- 每次审查使用全新上下文：需求、任务、计划/知识/代码版本、累计 Diff、当前源码、
+  项目显式规则、OCR 补充指导及实际验证 Evidence，不传完整 Coder 对话，也不授予模型工具。
+  重构另带不变量 ID 和历史基线证据；基线不能替代当前快照验证。
+- 纳入新增/修改/删除文件、任务范围内源码和来源文件；最多 64 个路径、整体 512 KiB，
+  同时受既有源码/工具输出限制。必需内容截断、读取失败、覆盖缺失或版本变化均阻塞。
+  审查全部项目显式规则以覆盖累计 Diff；上下文过大需缩小计划范围。
+- 模型只返回结构化判断、问题、覆盖声明和文档维护结论；运行时补齐 ReviewResult
+  的任务、版本、时间与来源。即使模型声明 passed，blocking/major 仍阻塞；
+  inconclusive、无效 Schema、伪造 Evidence 字段、缺失覆盖或模型不可用均不能通过。
+  覆盖声明检查不代表模型理解与审查质量已经得到实测证明。
+- 任务验证通过后执行独立审查；全部任务完成后，在最终快照重新验证并审查业务任务及全局验收。
+  任务审查随 Workflow Engine 留存 REVIEW Evidence；最终重审见返回 JSON 的 final_reviews。
+  最终检查失败时 run 返回 blocked，历史任务状态不代表整个需求已经完成。
+- review_context_built、ModelRuntime 请求/结果和 review_recorded 保存输入、结果及引用；
+  后者记录 task/final 阶段和上下文摘要。记录失败停止，取消保留中断记录。
+  审查与 Coder/Verifier 共用既有工具和模型预算，额度不因重审或修复重置；
+  默认额度可能不足以覆盖较大项目，预算不足时阻塞。
+
+当前已通过模拟模型回归及 Windows 上 glm-5.3 的有限真实冒烟：
+正常改动通过三次审查，明确的返回值回归在测试通过时仍被阻止。
+代表性项目的审查质量和 macOS 原生复验仍待完成。
+P10 保持 IN_PROGRESS；P11/P12 未实现，requirement_complete 仍为 false。
+
+
+### 真实 Reviewer 冒烟（Windows）
+
+使用已配置的 .env 执行；非默认位置可设置 CODING_AGENT_REVIEW_ENV_FILE。
+
+~~~powershell
+$env:CODING_AGENT_REVIEW_LIVE='1'
+.\.venv\Scripts\python.exe -m pytest tests/test_reviewer_live.py -q -s --tb=short
+$env:CODING_AGENT_REVIEW_LIVE='0'
+~~~
+
+每轮最多 4 次 API 调用，每次最多 8192 输出 token、60 秒，不自动重试。
+只发送临时合成项目，复用实际 Windows 沙箱、unittest、Reviewer 和门禁；
+Coder 由固定补丁代替，因此不代表真实 Codex 端到端验收。
+正常场景检查任务审查与两次最终重审；回归场景故意保留不能检测返回值变化的弱测试，
+要求模型发现行为违约并阻止完成。修复预算设为 0，发现问题即停止。
+测试输出报告路径，报告包含模型调用/用量、审查结果及 journal 引用。
+缺少配置、429、超时、审查漏项均算失败；默认跳过不计通过。

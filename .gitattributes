@@ -1,0 +1,2 @@
+# Keep the pinned rule bundle byte-identical across Git checkouts.
+/src/coding_agent/data/open_code_review/rules.json text eol=lf

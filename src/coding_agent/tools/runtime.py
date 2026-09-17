@@ -12,6 +12,7 @@ from time import monotonic
 
 from ..core.knowledge import InitializationOperation
 from ..core.planning import PlanningOperation
+from ..core.review import ReviewRulesOperation
 from ..core.tool_policy import PolicyEngine, path_permitted, relative_parts
 from ..core.tools import (
     ArtifactRef,
@@ -38,6 +39,7 @@ from ..core.workflow import (
 from ..core.workspace import WorkspaceOperation
 from ..runtime.filesystem import FileBoundaryError, SafeFiles
 from ..runtime.process import ProcessBackend, ProcessOutcome, default_process_backend
+from ..runtime.review_rules import load_guidance
 from ..runtime.workspace import Workspace
 from ..session.records import JsonlJournal
 
@@ -270,6 +272,9 @@ class ToolRuntime:
                         else self.workspace.diff()
                     )
                     status, reason = "succeeded", "managed worktree inspected"
+                elif isinstance(invocation, ReviewRulesOperation):
+                    executed = True
+                    output = load_guidance(invocation).model_dump_json()
                 elif isinstance(invocation, Read):
                     output = self.files.read(invocation.path)
                     executed = True

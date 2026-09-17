@@ -9,6 +9,7 @@ from pydantic import AwareDatetime, Field, StrictBool, model_validator
 from .knowledge import InitializationOperation
 from .models import Command, DomainModel, Identifier, NonEmptyStr
 from .planning import PlanningOperation
+from .review import ReviewRulesOperation
 from .workspace import WorkspaceOperation
 
 # Paths are operation data: stripping whitespace can redirect an approved action.
@@ -54,7 +55,8 @@ Invocation = Annotated[
     | Git
     | WorkspaceOperation
     | InitializationOperation
-    | PlanningOperation,
+    | PlanningOperation
+    | ReviewRulesOperation,
     Field(discriminator="kind"),
 ]
 

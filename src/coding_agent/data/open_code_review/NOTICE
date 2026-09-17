@@ -1,0 +1,12 @@
+Open Code Review supplemental rules
+Source: https://github.com/alibaba/open-code-review
+Commit: 4e59c7e815bde045158b549cdc2a7f58a32f6ba0
+Copyright 2026 alibaba/open-code-review Contributors
+License: Apache-2.0 (see LICENSE in this directory)
+
+rules.json contains 52 unmodified rule documents referenced by the pinned
+internal/config/rules/system_rules.json. The upstream ordered path map is retained;
+brace alternatives were expanded into explicit patterns for the existing Python
+path matcher. Packaging and metadata were generated for Verified Coding Agent Runtime.
+The rules are supplemental guidance, not authoritative project instructions.
+No upstream CLI, model loop, file filtering or custom rule loader is included.
