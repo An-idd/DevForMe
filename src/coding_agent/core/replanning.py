@@ -1,7 +1,9 @@
 """Conservative live replanning within the already approved requirement and scope."""
 
-from .knowledge import KnowledgeSnapshot
+from .decisions import DecisionRecord
+from .knowledge import KnowledgeSnapshot, SourceFile
 from .models import DomainModel, RiskLevel
+from .paths import path_permitted
 from .planning import ComplexityAssessment, PlanDraft, PlanVersion, validate_draft
 from .workflow.events import WorkflowEvent
 
@@ -12,6 +14,7 @@ class SessionUsage(DomainModel):
     replans: int
     tool_calls: int
     model_calls: int
+    decisions: int = 0
 
     @classmethod
     def from_events(cls, events: tuple[WorkflowEvent, ...]) -> "SessionUsage":
@@ -29,6 +32,7 @@ class SessionUsage(DomainModel):
                 for e in events
             ),
             model_calls=sum(e.model_request is not None for e in events),
+            decisions=sum(e.kind == "decision_requested" for e in events),
         )
 
 
@@ -38,11 +42,16 @@ class ReplanRecord(DomainModel):
     proposed: PlanVersion
     retired_task_ids: tuple[str, ...]
     usage: SessionUsage
+    decision: DecisionRecord | None = None
     disposition: str = "Keep prior work/history; rerun all current tasks and applicable checks"
 
 
 def validate_replan(
-    draft: PlanDraft, previous: PlanVersion, knowledge: KnowledgeSnapshot
+    draft: PlanDraft,
+    previous: PlanVersion,
+    knowledge: KnowledgeSnapshot,
+    *,
+    inspected_sources: tuple[SourceFile, ...] = (),
 ) -> tuple[str, ...]:
     """Only operational refinements inherit approval; material changes stop for review."""
     old = previous.draft
@@ -83,7 +92,17 @@ def validate_replan(
         authorized = [
             t
             for t in related
-            if set(item.task.scope.allowed) <= set(t.task.scope.allowed)
+            if (
+                set(item.task.scope.allowed) <= set(t.task.scope.allowed)
+                or (
+                    previous.settings.autonomy is not None
+                    and bool(previous.settings.scope.allowed)
+                    and all(
+                        path_permitted(path, previous.settings.scope, write=True)
+                        for path in item.task.scope.allowed
+                    )
+                )
+            )
             and item.task.scope.forbidden == t.task.scope.forbidden
             and item.task.permissions == t.task.permissions
             and item.task.max_attempts <= t.task.max_attempts
@@ -112,4 +131,9 @@ def validate_replan(
         same_id = next((t for t in old.tasks if t.task.id == item.task.id), None)
         if same_id and item.criterion_ids != same_id.criterion_ids:
             raise ValueError("retained task IDs cannot change criterion identity")
-    return validate_draft(draft, knowledge, previous.settings)
+    return validate_draft(
+        draft,
+        knowledge,
+        previous.settings,
+        inspected_sources=inspected_sources,
+    )

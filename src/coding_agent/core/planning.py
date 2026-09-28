@@ -13,8 +13,17 @@ from pydantic import (
     model_validator,
 )
 
+from .decisions import AutonomyPolicy
 from .graph import TaskGraph
-from .knowledge import Digest, KnowledgeSnapshot, OpenQuestion, RepoSummary, SourceReference, Text
+from .knowledge import (
+    Digest,
+    KnowledgeSnapshot,
+    OpenQuestion,
+    RepoSummary,
+    SourceFile,
+    SourceReference,
+    Text,
+)
 from .models import (
     AcceptanceSpec,
     DomainModel,
@@ -159,6 +168,7 @@ class PlanDraft(DomainModel):
 
 
 class PlanSettings(DomainModel):
+    autonomy: AutonomyPolicy | None = None
     scope: ScopePolicy = ScopePolicy()
     permissions: PermissionPolicy = PermissionPolicy(shell="restricted")
     mode: Literal["fast", "standard", "strict"] = "standard"
@@ -173,6 +183,8 @@ class PlanSettings(DomainModel):
     def serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
         # Keep pre-budget plan revisions and existing approvals valid at legacy defaults.
         data: dict[str, object] = handler(self)
+        if self.autonomy is None:
+            data.pop("autonomy", None)
         if self.max_tool_calls == 30:
             data.pop("max_tool_calls", None)
         if self.max_model_calls == 31:
@@ -266,6 +278,7 @@ def validate_draft(
     *,
     requirement: RequirementContract | None = None,
     previous: PlanVersion | None = None,
+    inspected_sources: tuple[SourceFile, ...] = (),
 ) -> tuple[str, ...]:
     """Structural/scope checks are deterministic; semantic judgments remain proposals."""
     draft = PlanDraft.model_validate(draft)
@@ -274,6 +287,10 @@ def validate_draft(
     graph = TaskGraph(tasks=tuple(t.task for t in draft.tasks))
     entries = {e.id: e for e in knowledge.summary.entries}
     observed = {s.path for s in knowledge.repository.sources}
+    additional = tuple(s for s in inspected_sources if s.path not in observed)
+    if any(s.truncated or s.role != "code" for s in additional):
+        raise ValueError("runtime research supplies complete code observations, never new rules")
+    observed.update(s.path for s in additional)
     present = set(knowledge.repository.paths)
     blockers = [q.text for q in knowledge.summary.questions if q.blocking]
     blockers.extend(q.text for q in draft.assessment.unknowns if q.blocking)
@@ -343,7 +360,7 @@ def validate_draft(
         raise ValueError("task attempt allocation exceeds the session limit")
     RepoSummary(
         questions=(*questions, OpenQuestion(text="Assessment sources", sources=tuple(references)))
-    ).check_sources(knowledge.repository.sources)
+    ).check_sources((*knowledge.repository.sources, *additional))
     if previous is not None:
         if (
             draft.requirement != previous.draft.requirement

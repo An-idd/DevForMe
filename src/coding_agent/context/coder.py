@@ -1,5 +1,6 @@
 """Task-scoped, versioned context assembled through recorded runtime reads."""
 
+from ..core.decisions import AutonomyPolicy
 from ..core.knowledge import (
     USER_SOURCE,
     KnowledgeEntry,
@@ -32,6 +33,7 @@ class TaskContextPack(DomainModel):
     current_sources: tuple[SourceFile, ...]
     questions: tuple[OpenQuestion, ...]
     gaps: tuple[str, ...]
+    autonomy: AutonomyPolicy | None = None
 
 
 async def build_context(
@@ -72,7 +74,18 @@ async def build_context(
     snapshot = runtime.workspace.snapshot()
     actual = {f.path: f for f in snapshot.files}
     current: list[SourceFile] = []
-    for source in sources:
+    # An autonomous replan can include previously unsampled code. Re-read it on
+    # subsequent attempts; earlier decision excerpts are not current observations.
+    additional = (
+        tuple(
+            SourceFile(path=path, sha256=actual[path].sha256, role="code", text="")
+            for path in sorted(paths)
+            if path in actual and path not in {s.path for s in sources}
+        )
+        if plan.settings.autonomy is not None
+        else ()
+    )
+    for source in (*sources, *additional):
         if source.path == USER_SOURCE:
             continue
         if source.path not in actual:
@@ -112,6 +125,7 @@ async def build_context(
         current_sources=tuple(current),
         questions=(*knowledge.summary.questions, *plan.draft.assessment.unknowns),
         gaps=knowledge.summary.gaps,
+        autonomy=plan.settings.autonomy,
     )
     if len(context.model_dump_json().encode()) > 512 * 1024:
         raise ValueError("task context exceeds 512 KiB; refine focus and plan")

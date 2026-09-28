@@ -15,6 +15,7 @@ from ..providers.runtime import ModelRuntime
 from ..session.records import inspect_journal
 from ..tools.execution import ExecutionRuntime
 from ..tools.runtime import ToolRuntime
+from .decisions import decide
 
 
 async def replan(
@@ -24,7 +25,7 @@ async def replan(
     runtime: ToolRuntime,
     provider: ModelProvider,
     result: WorkflowResult,
-) -> PlanVersion:
+) -> ReplanRecord:
     view = inspect_journal(owner.journal.directory / "events.jsonl")
     if view.unresolved or view.incomplete_tail:
         raise ValueError("replanning requires complete operation outcomes")
@@ -49,7 +50,8 @@ async def replan(
     if revision != result.revision:
         raise ValueError("workspace changed after workflow stopped")
     owner.record("replan_requested", result, revision)
-    context = await build_context(runtime, previous, knowledge)
+    question = result.replan.question if result.replan is not None else None
+    context = await build_context(runtime, previous, knowledge, review=question is not None)
     diff = await runtime.execute(
         ToolRequest(
             request_id=f"replan-diff-{owner.journal.next_sequence}",
@@ -58,6 +60,17 @@ async def replan(
     )
     if diff.status != "succeeded" or diff.truncated:
         raise ValueError("replanning requires a complete recorded diff")
+    decision = None
+    if question is not None:
+        decision = await decide(owner, previous, runtime, provider, question, context, diff.output)
+        if decision.status == "needs_user":
+            raise ValueError(
+                "User decision required: "
+                + question.text
+                + "; "
+                + decision.step.reason
+                + ("; recommendation: " + decision.step.choice if decision.step.choice else "")
+            )
     model = ModelRuntime(provider, journal=owner.journal, read_revision=runtime.read_revision)
     if owner.journal.model_calls >= previous.settings.max_model_calls:
         raise ValueError("session model budget exhausted before replanning")
@@ -74,6 +87,7 @@ async def replan(
                     "context": context.model_dump(mode="json"),
                     "diff": diff.output,
                     "usage": usage.model_dump(mode="json"),
+                    "decision": decision.model_dump(mode="json") if decision else None,
                     "instruction": "Refine tasks within prior authorization; do not reset budgets",
                 }
             ),
@@ -84,7 +98,23 @@ async def replan(
         raise ValueError("workspace changed during replanning; reconciliation required")
     assert runtime.workspace is not None
     try:
-        blockers = validate_replan(draft, previous, knowledge)
+        observations = (
+            {
+                s.path: s
+                for s in (
+                    *context.current_sources,
+                    *(decision.research_sources if decision else ()),
+                )
+            }
+            if previous.settings.autonomy is not None
+            else {}
+        )
+        blockers = validate_replan(
+            draft,
+            previous,
+            knowledge,
+            inspected_sources=tuple(observations.values()),
+        )
     except ValueError as error:
         blockers = (str(error),)
     proposed = PlanVersion(
@@ -111,8 +141,9 @@ async def replan(
         usage=SessionUsage.from_events(
             inspect_journal(owner.journal.directory / "events.jsonl").events
         ),
+        decision=decision,
     )
     owner.record("replan_proposed", record, revision)
     if blockers:
         raise ValueError("replan blocked: " + "; ".join(blockers))
-    return proposed
+    return record

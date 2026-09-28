@@ -3366,12 +3366,13 @@ Code failure means a definite failed check, not proof that this change introduce
 Matching pre-existing baseline failures and unavailable/uncertain/invalid observations stop
 automatic repairs. Adapter exceptions retain an unknown diagnosis and their existing stop behavior.
 
-Operational revisions may split/replace current tasks within prior concrete scope,
-permissions and risk floors. Requirement-wide acceptance, task criteria/checks, rules,
+Operational revisions may split/replace current tasks within prior concrete scope
+(or the explicitly preauthorized autonomous ceiling described below), permissions and
+risk floors. Requirement-wide acceptance, task criteria/checks, rules,
 invariants, baseline checks and pending milestones remain intact. ReplanRecord stores the
 previous revision and assessment, the proposed immutable PlanVersion, retired task IDs,
 consumption and evidence disposition. Invalid proposals remain inspectable and are not
-authorized. New scope/permissions, changed rules, uncertain side effects and manual source
+authorized. Scope beyond that ceiling, new permissions, changed rules, uncertain side effects and manual source
 changes require reconciliation instead of automatic execution.
 
 The controller registers each accepted RunSpec with its predecessor fingerprint before
@@ -3387,6 +3388,49 @@ journals, checkpoint reconciliation and resume; requirement_complete remains fal
 Windows compatibility work stays paused at the user's request.
 
 ---
+
+### P11 bounded autonomous decisions (2026-09-28)
+
+PlanSettings.autonomy is an optional, controller-supplied policy, configured with
+agent plan --autonomous. It records explicit decision preferences, a session decision
+cap (default 2), and additional read/search calls per decision (default 4). An absent
+policy is omitted from serialization, preserving legacy plan fingerprints. Policy changes
+require a new authorization; existing plan revisions cannot silently change settings.
+
+Coder may return replan_required with ReplanRequest.question (text, implementation or
+requirement kind, and optional alternatives). With agent run --replan and an authorized
+policy, the configured Planner API handles this question before proposing the next plan.
+It receives project rules, task context, the current diff and preferences, and returns a
+DecisionStep: research, decide or ask_user. Research requests contain only local read/search;
+the controller dispatches them through ToolRuntime. No model-side native tools or web
+access are enabled. Each call consumes the existing model/tool budgets; each started
+question consumes the session decision cap, including rejected or failed calls. A decision
+also belongs to the existing bounded replan attempt. Limits do not reset across versions.
+
+Decisions cite exact observed source ranges/quotes or valid explicit preference indices.
+Requirement choices need explicit instruction/user sources or preferences, rather than
+inferred implementation behavior. Assumptions remain distinct. Citation validity is a
+structural check, not proof that the model's conclusion follows from it. Conflicting rules,
+unresolved material uncertainty or missing authority require user input. Decisions cannot
+resolve prior required OpenQuestions, change acceptance, grant permissions, or count as
+Evidence. Plan validation, independent review and final snapshot gates remain applicable.
+
+When autonomy is enabled and settings.scope.allowed is explicit, that scope is the
+preauthorized overall write ceiling. Current task paths may be adjusted within it;
+concrete paths, applicable rules, prior task acceptance, permissions, risk floors and
+attempt limits remain enforced. Without an explicit ceiling, prior task scopes apply.
+Complete runtime reads can supply observations of previously unsampled code for this
+proposal; they do not rewrite immutable project knowledge or introduce new rules.
+Later task contexts re-read these task files and source references; previous decision
+excerpts are historical observations, not substitutes for current source inspection.
+
+decision_requested records the question/context before model dispatch; decision_step and
+decision_recorded preserve proposals, assumptions, citations and runtime research references.
+Accepted replans also reference their decision and pass accumulated decision advice to the
+next Coder. Unavailable, truncated, stale or unrecorded observations stop automatic continuation.
+User-required results expose the question, recommendation and reason and retain the worktree.
+Interactive answers/resume, networking, automatic pending-milestone activation and live-model
+quality acceptance remain pending. The main reasoning role reuses the Planner; V1 stays serial.
 
 ## Phase 12 — Checkpoint / Resume
 

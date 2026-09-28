@@ -417,6 +417,7 @@ async def run(
                 review_runner.baseline_evidence = baseline.evidence
             initial_purpose: Literal["implement", "debug", "review_fix"] = "implement"
             initial_feedback: tuple[str, ...] = ()
+            decision_feedback: tuple[str, ...] = ()
             while True:
                 history = inspect_journal(owner.journal.directory / "events.jsonl")
                 engine = WorkflowEngine(
@@ -439,7 +440,7 @@ async def run(
                     if reviewer_identity(replanner) != replanner_identity:
                         raise ValueError("replanner configuration changed")
                     stopped = next(t for t in result.tasks if t.state.value == "REPLAN_REQUIRED")
-                    proposed = await replan(
+                    replanned = await replan(
                         owner,
                         plan,
                         knowledge,
@@ -473,8 +474,14 @@ async def run(
                     + tuple(e.result for e in result.evidence if not e.passed)
                     + tuple(finding for r in result.reviews for finding in (*r.blocking, *r.major))
                 )
+                if replanned.decision is not None:
+                    decision_feedback += (
+                        "Recorded engineering decision (not new authority or Evidence): "
+                        + replanned.decision.model_dump_json(),
+                    )
+                initial_feedback += decision_feedback
                 previous_spec = spec
-                plan = proposed
+                plan = replanned.proposed
                 spec = execution_spec(plan, config, workspace, verification, reviewer, replanner)
                 owner.journal.register_plan(spec, previous=previous_spec)
                 approval = PlanApproval(

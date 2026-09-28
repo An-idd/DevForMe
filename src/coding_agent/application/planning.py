@@ -125,6 +125,20 @@ def render_plan(plan: PlanVersion) -> str:
             lines.append(f"  - {check.id}: {check.description}; command={check.command}")
         lines.append("")
     lines.extend(("## Required roadmap", ""))
+    if plan.settings.autonomy is not None:
+        policy = plan.settings.autonomy
+        lines.extend(
+            (
+                "Autonomous decisions authorized: "
+                f"{policy.max_decisions} per session; "
+                f"{policy.max_research_calls} additional reads/searches per decision.",
+                "Overall write ceiling: "
+                + (", ".join(plan.settings.scope.allowed) or "existing task scopes only"),
+                "Decision calls share session model/tool/replan budgets; no authority expansion.",
+                *(f"Decision preference: {p}" for p in policy.preferences),
+                "",
+            )
+        )
     for milestone in draft.milestones:
         lines.append(
             f"- {milestone.id} [{milestone.status}]: {milestone.title}; "
@@ -184,6 +198,11 @@ async def plan(
         raise ValueError("choose request text or a requirement contract")
     settings = settings or PlanSettings()
     sanitizer = Sanitizer(secrets)
+    if settings.autonomy is not None:
+        settings = PlanSettings.model_validate(
+            settings.model_dump(mode="json")
+            | {"autonomy": sanitizer.tree(settings.autonomy.model_dump(mode="json"))}
+        )
     initialized = await initialize(
         root, refresh=refresh, focus=focus, scope=settings.scope, secrets=secrets
     )

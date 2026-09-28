@@ -145,6 +145,11 @@ class _CodexBridge:
                     "Respect the supplied scope and requirements. Return only the requested "
                     "CoderResult JSON. implemented means a draft, never verified success. "
                     "Request replanning when scope or requirements must change."
+                    " Resolve routine implementation choices from project rules and observed "
+                    "sources first. When a necessary decision remains, return replan_required "
+                    "with structured replan details and question (text, kind, options). "
+                    "Use kind=requirement for unresolved business behavior. Do not call native "
+                    "user-input tools, invent user answers, or infer permission from a decision."
                 ),
                 "dynamicTools": [
                     {

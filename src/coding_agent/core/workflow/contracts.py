@@ -6,6 +6,7 @@ from typing import Annotated, Literal, Protocol
 
 from pydantic import AwareDatetime, Field, model_validator
 
+from ..decisions import DecisionQuestion
 from ..graph import TaskGraph
 from ..models import (
     DomainModel,
@@ -76,6 +77,7 @@ class ReplanRequest(DomainModel):
     reason: NonEmptyStr
     proposed_complexity: Literal["small", "medium", "large"]
     needed_changes: NonEmptyStr
+    question: DecisionQuestion | None = None
 
 
 class CoderResult(DomainModel):

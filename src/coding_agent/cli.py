@@ -12,6 +12,7 @@ from .application.execution import RunResult
 from .application.execution import run as execute_plan
 from .application.initialization import InitializationResult, initialize
 from .application.planning import PlanInspection, PlanningResult, inspect_plan, plan, render_graph
+from .core.decisions import AutonomyPolicy
 from .core.models import ScopePolicy
 from .core.planning import PlanSettings
 from .core.provider import GenerationSettings, ModelFailure, ProviderError
@@ -73,6 +74,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     planning.add_argument("--max-tool-calls", type=int, default=30)
     planning.add_argument("--max-model-calls", type=int, default=31)
     planning.add_argument("--max-replans", type=int, default=2)
+    planning.add_argument(
+        "--autonomous",
+        action="store_true",
+        help="Authorize bounded local decision research and replanning within --allow",
+    )
+    planning.add_argument("--decision-rule", action="append", default=[])
+    planning.add_argument("--max-decisions", type=int, default=2)
+    planning.add_argument("--max-research-calls", type=int, default=4)
     planning.add_argument("--model", help="Opt in to one recorded Planner call")
     planning.add_argument("--json", action="store_true")
     for name in ("status", "graph"):
@@ -196,11 +205,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command in {"status", "graph"}:
             return inspect_plan(args.path)
         if args.command == "plan":
+            if not args.autonomous and (
+                args.decision_rule or args.max_decisions != 2 or args.max_research_calls != 4
+            ):
+                raise ValueError("decision options require --autonomous")
             options = dict(
                 draft_path=args.draft,
                 requirement_path=args.requirement,
                 import_path=args.import_path,
                 settings=PlanSettings(
+                    autonomy=AutonomyPolicy(
+                        preferences=tuple(args.decision_rule),
+                        max_decisions=args.max_decisions,
+                        max_research_calls=args.max_research_calls,
+                    )
+                    if args.autonomous
+                    else None,
                     scope=ScopePolicy(allowed=tuple(args.allow), forbidden=tuple(args.forbid)),
                     mode=args.mode,
                     max_total_attempts=args.max_attempts,
@@ -272,6 +292,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("Requirement complete: false")
     elif isinstance(result, RunResult):
         print(f"{result.status}: {result.reason}")
+        if result.workflow and result.workflow.replan and result.workflow.replan.question:
+            decision_question = result.workflow.replan.question
+            print("Decision question: " + decision_question.text)
+            for option in decision_question.options:
+                print("  Option: " + option)
         if result.spec is not None:
             print(
                 f"Session limits: {result.spec.max_tool_calls} tool requests, "
