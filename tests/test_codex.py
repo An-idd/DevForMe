@@ -20,6 +20,67 @@ REVISION = Revision(plan_version=1, context_revision="rules-1", workspace_revisi
 
 
 @pytest.fixture
+def npm_codex(tmp_path, monkeypatch):
+    monkeypatch.setattr(codex.sys, "platform", "darwin")
+    monkeypatch.setattr(codex.platform, "machine", lambda: "arm64")
+    package = tmp_path / "node_modules" / "@openai" / "codex"
+    launcher = package / "bin" / "codex.js"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("#!/usr/bin/env node\nthrow new Error('must not execute launcher');\n")
+    (package / "package.json").write_text(
+        json.dumps({"name": "@openai/codex", "bin": {"codex": "bin/codex.js"}})
+    )
+    native = (
+        package / "node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex"
+    )
+    native.parent.mkdir(parents=True)
+    native.write_bytes(b"native fixture; never executed")
+    native.chmod(0o700)
+    return launcher, native
+
+
+@pytest.mark.parametrize("layout", ["nested", "hoisted", "bundled"])
+def test_resolve_npm_launcher_to_native_without_executing_it(npm_codex, tmp_path, layout):
+    launcher, native = npm_codex
+    package = launcher.parent.parent
+    if layout != "nested":
+        root = package.parent / "codex-darwin-arm64" if layout == "hoisted" else package
+        target = root / "vendor/aarch64-apple-darwin/bin/codex"
+        target.parent.mkdir(parents=True)
+        native.rename(target)
+        native = target
+    entry = tmp_path / "codex"
+    entry.symlink_to(launcher)
+    assert codex.resolve_codex_executable(entry) == native.resolve()
+    assert codex.resolve_codex_executable(native) == native.resolve()
+
+
+@pytest.mark.parametrize("broken", ["missing", "script", "mode", "manifest", "arch"])
+def test_resolver_rejects_unusable_npm_installation(npm_codex, monkeypatch, broken):
+    launcher, native = npm_codex
+    if broken == "missing":
+        native.unlink()
+    elif broken == "script":
+        native.write_text("#!/bin/sh\nexit 0\n")
+    elif broken == "mode":
+        native.chmod(0o600)
+    elif broken == "manifest":
+        (launcher.parent.parent / "package.json").write_text("[]")
+    else:
+        monkeypatch.setattr(codex.platform, "machine", lambda: "unknown")
+    with pytest.raises(ValueError):
+        codex.resolve_codex_executable(launcher)
+
+
+def test_resolver_rejects_an_unrecognized_shell_launcher(tmp_path):
+    launcher = tmp_path / "codex"
+    launcher.write_text("#!/bin/sh\nexec codex app-server\n")
+    launcher.chmod(0o700)
+    with pytest.raises(ValueError, match="Native Codex"):
+        codex.resolve_codex_executable(launcher)
+
+
+@pytest.fixture
 def environment(tmp_path, make_task):
     root = tmp_path / "repo"
     (root / "src").mkdir(parents=True)
@@ -140,7 +201,7 @@ def codex_server(monkeypatch):
     )
     monkeypatch.setattr(codex, "_CONFIG", offline)
     try:
-        yield Path(executable).resolve(), batches, requests
+        yield codex.resolve_codex_executable(Path(executable)), batches, requests
     finally:
         server.shutdown()
         server.server_close()
@@ -307,12 +368,28 @@ def fake_coder(monkeypatch, runtime, events, *, changed_thread=None, **options):
     return CodexCoder(settings(runtime, **options), runtime), rpc
 
 
-def test_bridge_stops_between_model_requests_and_runtime_side_effects(environment, monkeypatch):
-    coder, rpc = fake_coder(monkeypatch, environment, [dynamic(), *finished()])
+@pytest.mark.parametrize("version", sorted(codex.SUPPORTED_CODEX_VERSIONS))
+def test_bridge_stops_between_model_requests_and_runtime_side_effects(
+    environment, monkeypatch, version
+):
+    coder, rpc = fake_coder(
+        monkeypatch,
+        environment,
+        [dynamic(), *finished()],
+        changed_thread={
+            "thread": {"id": "thread", "cliVersion": version, "environments": [], "ephemeral": True}
+        },
+    )
     assert asyncio.run(implement(coder)).outcome == "implemented"
     assert (environment.root / "src/created.py").read_text() == "runtime change"
     assert rpc.closed
     assert not rpc.cwd.exists()
+    results = [
+        e.model_result
+        for e in inspect_journal(environment.journal.directory / "events.jsonl").events
+        if e.model_result
+    ]
+    assert [r.response_id for r in results] == [f"{version}/turn:1", f"{version}/turn"]
 
 
 @pytest.mark.parametrize(

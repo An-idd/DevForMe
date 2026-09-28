@@ -1428,12 +1428,46 @@ UTF-8/代码围栏及 git diff --check 通过。真实模型入口在测试中�
 下一步在兼容的 Codex/验证环境复验真实自主决策，再推进后续里程碑和新增授权的继续流程。
 不启动 P12，不恢复 Windows 适配。实现与验证完成后，用户另行授权创建本地提交；不推送。
 
+### 8.21 Codex 0.155.1 兼容接入（2026-09-28）
+
+用户授权“兼容的 Codex 接入”。开工基线 30f0782，工作区干净；
+范围为现有 Codex adapter 和 CLI，不启动 P12，不恢复 Windows 适配。
+复杂度 medium、风险 high：涉及外部编码引擎入口和实验性协议边界，保留逐项能力核验。
+
+定位两个实际失败点：本机 PATH 的 codex 为官方 npm JavaScript 包装器，
+清空继承环境后无法找到 Node；改用包内原生程序后，0.155.1 又被旧精确版本限制拒绝。
+核对本机 app-server 导出的 JSON Schema/TypeScript、无模型调用的 initialize/thread/start
+握手及官方 App Server 文档：https://learn.chatgpt.com/docs/app-server。
+0.155.1 返回所需的空 environments、空工作区/指令来源、ephemeral 和只读沙箱字段。
+
+新增官方 npm 原生入口解析，保持空继承 PATH；CLI 授权指纹绑定实际原生路径。
+保留旧版本并将 0.155.1 纳入精确白名单；原有权限、来源和事件检查不变。
+模型响应 ID 记录实际 CLI 版本，不再固定声称来自旧版。
+首轮真实 Codex + 本地假模型的 Codex/应用层检查 84 passed（10.05 秒），
+此前 11 项 Codex 失败已通过。
+首次定向 mypy 发现架构查询返回 Optional 的类型错误，已使用明确的未知架构值修正。
+新增 11 项入口解析、缺失/脚本/不可执行文件拒绝、版本记录及授权路径绑定回归；
+最终 Codex/应用层定向检查 95 passed（10.09 秒）。
+全量检查 951 passed、54 skipped、2 failed（31.96 秒），日志
+/private/tmp/devforme-codex-01551-full.log。
+剩余失败为 tests/test_tools.py 的 test_readonly_git_ignores_external_diff_and_hooks
+和 test_git_scope_and_multiline_redaction_reach_records，均为既有 macOS Git 索引读取失败。
+与 8.20 的全量/独立基线比对，没有新增失败，未修改或跳过这两项检查。
+Ruff check/format、Darwin/Windows mypy（69 个源码文件）、CLI run help 及差异检查通过。
+
+仅核查配置是否存在：本机未配置 CODING_AGENT_CODEX_HOME / CODING_AGENT_CODEX_MODEL；
+真实模型入口显式关闭，未调用账号、复制全局凭据或启动真实业务任务。
+当前结果不代表真实模型质量或人工介入率验收；下一步为专用账号配置后显式真实冒烟，
+并单独处理原有 macOS Git 后端失败。P11 保持 IN_PROGRESS；实现与验证完成后，
+用户另行授权创建本地提交；不推送。
+
 ## 9. 下一步执行单元
 
 当前安排（2026-09-28）：按用户要求暂停 Windows 适配，列为下方 TODO。
 此前开发记录中的 Windows 优先推进顺序已被本安排替代；后续“继续”不自动恢复该项。
-当前主线为 P11：自主决策与本地查证已完成离线实现，先在兼容的 Codex/验证环境
-复验真实任务，再推进后续里程碑的证据驱动激活和新增授权后的继续流程，
+当前主线为 P11：自主决策与本地查证已完成离线实现，Codex 0.155.1 已通过 macOS 原生离线接入验证；
+先处理既有 macOS Git 后端失败、配置专用账号并复验真实任务，
+再推进后续里程碑的证据驱动激活和新增授权后的继续流程，
 保留已有预算与失败历史。下列早期阶段复验保留为验收待办，不把未验证项计为完成。
 
 1. P06 真实探索需在代表性项目上显式运行 agent init PATH --refresh --model MODEL 并核查来源质量。

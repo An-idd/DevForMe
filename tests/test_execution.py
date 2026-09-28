@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from test_codex import codex_server as codex_server
 from test_codex import final_item, function_item
+from test_codex import npm_codex as npm_codex
 from test_planning import project as project
 
 from coding_agent.application import execution
@@ -324,6 +325,30 @@ def test_session_model_budget_stops_continuation_without_discarding_patch(planne
     result = run(native, approve=run(native).fingerprint)
     assert result.status == "blocked" and "model budget" in result.reason
     assert len(requests) == 1 and "+def run(): return 2" in inspect_execution(root).diff
+
+
+def test_cli_preview_binds_resolved_npm_binary(planned, capsys, npm_codex):
+    root, _, _, config, workspace = planned
+    launcher, native = npm_codex
+    args = [
+        "run",
+        "--path",
+        str(root),
+        "--workspace",
+        str(workspace),
+        "--codex-home",
+        str(config.home),
+        "--model",
+        config.model,
+        "--json",
+    ]
+    assert main([*args, "--codex", str(launcher)]) == 2
+    preview = json.loads(capsys.readouterr().out)
+    assert main([*args, "--codex", str(native)]) == 2
+    assert preview["fingerprint"] == json.loads(capsys.readouterr().out)["fingerprint"]
+    assert main([*args, "--codex", str(config.executable)]) == 2
+    assert preview["fingerprint"] != json.loads(capsys.readouterr().out)["fingerprint"]
+    assert not workspace.exists() and not config.home.exists()
 
 
 def test_cli_preview_run_status_diff_and_history(planned, scripted, capsys):

@@ -12,7 +12,7 @@ import pytest
 
 from coding_agent.core import TaskGraph, TaskSpec
 from coding_agent.core.workflow import PlanApproval, Revision, RunSpec
-from coding_agent.executors.codex import CodexCoder, CodexSettings
+from coding_agent.executors.codex import CodexCoder, CodexSettings, resolve_codex_executable
 from coding_agent.session.records import JsonlJournal, inspect_journal
 from coding_agent.tools import ToolRuntime
 
@@ -71,7 +71,7 @@ def test_codex_live_reads_and_patches_synthetic_project(tmp_path, make_task):
         timestamp=datetime.now(UTC),
     )
     config = CodexSettings(
-        executable=Path(executable).resolve(),
+        executable=resolve_codex_executable(Path(executable)),
         home=Path(home).resolve(),
         model=model,
         max_tool_calls=4,

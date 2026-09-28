@@ -587,10 +587,13 @@ CODING_AGENT_LIVE_SMOKE=1 .venv/bin/python -m pytest tests/test_provider_live.py
 | 路径 | 用途 | 当前验证 |
 | --- | --- | --- |
 | OpenAIProvider + ModelRuntime | 直接模型推理、结构化输出 | 模拟 HTTP 通过；真实 API 待验证 |
-| CodexCoder | 本地 Codex 编码循环 | Windows 真实 CLI + 本地假模型通过；真实账号、macOS 待验证 |
+| CodexCoder | 本地 Codex 编码循环 | Windows 旧版、macOS 0.155.1 真实 CLI + 本地假模型通过；真实账号验收待完成 |
 | Claude Code / Pi adapter | 后续替换编码引擎 | 规划中 |
 
-首版只支持原生 Codex CLI **0.154.0-alpha.6.2**；协议使用实验性接口，其他版本拒绝执行。
+支持原生 Codex CLI **0.154.0-alpha.6.2** 和 **0.155.1**；协议使用实验性接口，
+其他版本拒绝执行，升级需要重新验证。macOS/Linux 的官方 npm `codex` 入口会解析到
+安装包中的原生二进制，不执行 JavaScript 包装器、不继承宿主 PATH。
+找不到原生程序时可用 `--codex /absolute/path/to/codex` 指定。
 Windows 需真正的 codex.exe，不能使用 .cmd/.bat 包装器。运行时关闭 Codex 原生环境访问，
 通过动态工具将项目读写、命令和 Git 交给 Tool Runtime；模型不能写任务状态或 Evidence。
 Windows Job/POSIX 进程组用于管理生命周期，工具沙箱仍由 P03 后端负责。
@@ -601,11 +604,11 @@ Windows Job/POSIX 进程组用于管理生命周期，工具沙箱仍由 P03 后
 
 ```python
 from pathlib import Path
-from coding_agent.executors.codex import CodexCoder, CodexSettings
+from coding_agent.executors.codex import CodexCoder, CodexSettings, resolve_codex_executable
 
 coder = CodexCoder(
     CodexSettings(
-        executable=Path(native_codex_path).resolve(),
+        executable=resolve_codex_executable(Path(codex_path)),
         home=Path(dedicated_codex_home).resolve(),
         model=selected_model,
         timeout_seconds=60,
@@ -616,6 +619,8 @@ coder = CodexCoder(
 ```
 
 executable 与 home 都必须在项目和权威日志目录之外，避免被任务工具改写。
+CLI 的执行预览/授权绑定解析后的原生路径；模型响应记录中的 response_id
+以实际握手通过的 CLI 版本为前缀，便于核对执行来源。
 home 使用专用目录；首次调用写入固定配置，
 遇到其他配置会拒绝覆盖。先在独立终端把 CODEX_HOME 指向这个专用目录，再运行
 codex -c cli_auth_credentials_store=file login，确保使用 adapter 对应的文件凭据存储；

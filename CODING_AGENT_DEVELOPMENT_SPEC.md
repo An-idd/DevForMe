@@ -2619,11 +2619,20 @@ and the application/CLI path described in Section 32.2; live account and cross-p
 acceptance remain outstanding.
 
 The bridge uses the installed native Codex App Server with JSONL stdio. The experimental
-contract is pinned to CLI 0.154.0-alpha.6.2: environments=[] at thread and turn creation,
+contract permits only the tested CLI builds 0.154.0-alpha.6.2 and 0.155.1:
+environments=[] at thread and turn creation,
 an ephemeral thread, no runtime workspace roots or discovered instructions, and the
 runtime's five project tools as client-handled dynamic tools. A capability mismatch,
 unknown server request, unbridged native-action event, foreign identity, duplicate call,
 malformed arguments or invalid final schema stops execution.
+The macOS/Linux CLI entry point may resolve an official npm codex.js launcher to its
+installed native binary without executing the launcher or inheriting the host PATH.
+The resolved native path is bound into execution configuration and approval; unknown
+launchers or missing native binaries fail before execution. Library callers can use
+resolve_codex_executable before constructing CodexSettings. Successful model segment
+response IDs include the actual validated CLI version followed by the turn identity.
+The new build has macOS native/offline conformance, not new live-account or Windows
+acceptance; those checks remain separate from protocol compatibility.
 
 A dedicated controller-selected CODEX_HOME outside the project and authoritative journal
 holds fixed adapter configuration and native Codex login. Never overwrite another
@@ -2680,7 +2689,8 @@ enforcement or account compatibility.
 application.execution.run consumes the current immutable P07 plan and P06 knowledge.
 Missing initialization invokes the existing offline setup and asks for a reviewed plan.
 The P08 CLI deliberately requires a saved plan: agent run --path ROOT --workspace NEW
---codex-home DEDICATED --model MODEL. Optional --codex selects the native executable.
+--codex-home DEDICATED --model MODEL. Optional --codex selects the native executable
+or a supported official npm entry point, resolved before the execution preview.
 A preview reports the RunSpec fingerprint and limits without launching Codex or creating
 a Worktree. --approve FINGERPRINT records controller authorization matching that exact
 request; an Agent response is never an approval.

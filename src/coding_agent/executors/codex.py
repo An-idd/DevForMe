@@ -8,6 +8,8 @@ its reply. The existing single-writer journal needs no nested operation support.
 import asyncio
 import json
 import os
+import platform
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Annotated, Literal
@@ -39,8 +41,9 @@ from ..providers.runtime import ModelRuntime
 from ..tools import ToolRuntime
 from ._codex_rpc import CodexRPC
 
-# Experimental environment suppression has been checked against this exact build.
-CODEX_VERSION = "0.154.0-alpha.6.2"
+# Experimental environment suppression requires conformance for each exact build.
+CODEX_VERSION = "0.155.1"
+SUPPORTED_CODEX_VERSIONS = frozenset({"0.154.0-alpha.6.2", CODEX_VERSION})
 _CONFIG = """web_search = "disabled"
 cli_auth_credentials_store = "file"
 check_for_update_on_startup = false
@@ -70,6 +73,49 @@ sleep_tool = false
 """
 
 
+def resolve_codex_executable(path: Path) -> Path:
+    """Resolve an official npm launcher without executing it or inheriting PATH."""
+    executable = path.resolve(strict=True)
+    if executable.name == "codex.js":
+        package = executable.parent.parent
+        manifest = json.loads((package / "package.json").read_text(encoding="utf-8"))
+        if (
+            executable.parent.name != "bin"
+            or not isinstance(manifest, dict)
+            or manifest.get("name") != "@openai/codex"
+            or manifest.get("bin") != {"codex": "bin/codex.js"}
+        ):
+            raise ValueError("Codex launcher is not a recognized official npm entry point")
+        arch = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "x64", "amd64": "x64"}.get(
+            platform.machine().lower(), ""
+        )
+        targets = {
+            ("darwin", "arm64"): "aarch64-apple-darwin",
+            ("darwin", "x64"): "x86_64-apple-darwin",
+            ("linux", "arm64"): "aarch64-unknown-linux-musl",
+            ("linux", "x64"): "x86_64-unknown-linux-musl",
+        }
+        target = targets.get((sys.platform, arch))
+        if target is None:
+            raise ValueError("This platform requires an explicit native Codex executable")
+        dependency = "codex-" + sys.platform + "-" + arch
+        # Match npm's nested/hoisted optional dependency and bundled-vendor layouts.
+        roots = (
+            package / "node_modules" / "@openai" / dependency,
+            package.parent / dependency,
+            package,
+        )
+        candidates = (root / "vendor" / target / "bin" / "codex" for root in roots)
+        executable = next((p.resolve() for p in candidates if p.is_file()), executable)
+    with executable.open("rb") as stream:
+        is_script = stream.read(2) == b"#!"
+    if is_script or executable.suffix.lower() in {".js", ".cmd", ".bat", ".ps1"}:
+        raise ValueError("Native Codex binary unavailable; pass its path with --codex")
+    if not os.access(executable, os.X_OK):
+        raise ValueError("Codex binary is not executable")
+    return executable
+
+
 class CodexSettings(DomainModel):
     executable: Path
     home: Path
@@ -79,7 +125,7 @@ class CodexSettings(DomainModel):
 
 
 class _CodexBridge:
-    name = f"codex-app-server/{CODEX_VERSION}"
+    name = "codex-app-server"
 
     def __init__(self, config: CodexSettings) -> None:
         self.config = config
@@ -97,6 +143,7 @@ class _CodexBridge:
         self._thread = ""
         self._turn = ""
         self._model = ""
+        self._version = ""
         self._usage: TokenUsage | None = None
         self._closed = False
 
@@ -164,7 +211,7 @@ class _CodexBridge:
         )
         thread = started["thread"]
         if (
-            thread["cliVersion"] != CODEX_VERSION
+            thread["cliVersion"] not in SUPPORTED_CODEX_VERSIONS
             or thread["environments"] != []
             or thread["ephemeral"] is not True
             or started["instructionSources"] != []
@@ -176,6 +223,7 @@ class _CodexBridge:
         ):
             raise ProviderError(ModelFailure(code="configuration"))
         self._thread, self._model = thread["id"], started["model"]
+        self._version = thread["cliVersion"]
         turn = await self.rpc.call(
             "turn/start",
             {
@@ -280,7 +328,7 @@ class _CodexBridge:
                 self._seen.add(call.call_id)
                 self._pending = event["id"]
                 return ModelResponse(
-                    response_id=f"{self._turn}:{len(self._seen)}",
+                    response_id=f"{self._version}/{self._turn}:{len(self._seen)}",
                     model=self._model,
                     message=Message(role="assistant", tool_calls=(call,)),
                 )
@@ -311,7 +359,7 @@ class _CodexBridge:
                 if turn["id"] != self._turn or turn["status"] != "completed" or turn.get("error"):
                     raise ValueError("Codex turn did not complete")
                 return ModelResponse(
-                    response_id=self._turn,
+                    response_id=f"{self._version}/{self._turn}",
                     model=self._model,
                     usage=self._usage,
                     message=Message(role="assistant", content=final_text),

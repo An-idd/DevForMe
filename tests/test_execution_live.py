@@ -11,7 +11,7 @@ from test_planning import project as project
 from coding_agent.application.execution import run
 from coding_agent.application.planning import plan
 from coding_agent.core.planning import PlanDraft
-from coding_agent.executors.codex import CodexSettings
+from coding_agent.executors.codex import CodexSettings, resolve_codex_executable
 from coding_agent.tools.execution import inspect_execution
 
 
@@ -40,7 +40,7 @@ def test_live_context_to_retained_worktree(project, tmp_path):
     saved = asyncio.run(plan(root, draft=PlanDraft.model_validate(data))).plan
     assert saved is not None
     config = CodexSettings(
-        executable=Path(executable).resolve(),
+        executable=resolve_codex_executable(Path(executable)),
         home=Path(home).resolve(),
         model=model,
         max_tool_calls=3,

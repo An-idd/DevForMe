@@ -18,7 +18,7 @@ from .core.planning import PlanSettings
 from .core.provider import GenerationSettings, ModelFailure, ProviderError
 from .core.verification import VerificationSettings
 from .core.workflow import EventWriteError
-from .executors.codex import CodexSettings
+from .executors.codex import CodexSettings, resolve_codex_executable
 from .providers.config import AssistantConfig, load_assistant_config
 from .providers.openai import OpenAIProvider
 from .providers.zhipu import ZhipuProvider
@@ -97,7 +97,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     execution.add_argument(
         "--workspace", type=Path, required=True, help="New directory outside the project"
     )
-    execution.add_argument("--codex", type=Path, help="Native Codex executable")
+    execution.add_argument("--codex", type=Path, help="Native Codex or official npm entry point")
     execution.add_argument(
         "--codex-home", type=Path, default=os.environ.get("CODING_AGENT_CODEX_HOME")
     )
@@ -188,7 +188,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ),
                 approve=args.approve,
                 config=CodexSettings(
-                    executable=Path(executable).resolve(strict=True),
+                    executable=resolve_codex_executable(Path(executable)),
                     home=Path(args.codex_home).resolve(),
                     model=args.model,
                 ),
